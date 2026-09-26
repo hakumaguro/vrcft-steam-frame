@@ -29,15 +29,24 @@ frameeyeosc sends `/avatar/parameters/FT/v2/{EyeLeftX,EyeLeftY,EyeRightX,EyeRigh
 - Blinks are reported lopsided (one lid ~0, the other ~1.0) for ~100 ms; real winks last seconds. `blink.coupleMs` exists for this.
 - Left wink is clean in the raw data. A right wink also lowers the left lid (to ~0.25): tracker cross-talk.
 
-## Open issue (where we stopped)
+## Resolved: "a wink closes both avatar eyes" (2026-09-26)
 
-User reports a wink on either eye closes BOTH avatar eyes in VRChat (avatar Haku_FT_Comfy). The module and VRCFT output were shown to be
-per-eye, so suspect the avatar side: it exposes a parameter `FT/EyeSync` (a toggle whose behaviour has NOT been verified; the name suggests it
-links the two eyelids). VRChat's OSC output did not report its value. Next steps, in order:
-1. Ask the user to look for an eye-sync / link-eyes option in the avatar's menu and turn it off, or test with an avatar without one.
-2. Or set it over OSC: send `/avatar/parameters/FT/EyeSync` (bool/float 0) to VRChat on UDP 9000 and have the user wink again.
-3. If a right wink still closes both, that is the tracker coupling (see above); raise `wink.strength`/lower `wink.threshold`, or accept it.
-Also untested on the avatar: blink coupling (`blink.coupleMs` 154) and the fixed per-eye calibration written by `tune.py analyze --apply`.
+Cause was on the avatar, not the module: Haku_FT_Comfy has a Bool toggle `FT/EyeSync` (avatar menu, Face Tracking) that links the two
+eyelids. The user turned it off and blinking/winking then worked. The module -> VRCFT chain was already proven per-eye by a synthetic sweep
+(see "Measuring VRCFT output"). If a future avatar closes both eyes on a wink, check its menu/parameters for an eye-sync/link option first.
+The `FT/EyeSync` toggle can also be set over OSC: send a Bool to `/avatar/parameters/FT/EyeSync` on UDP 9000.
+
+Still possible limits: the tracker couples the eyes on a right-eye wink (left lid drops to ~0.25 in the raw data), so a right wink may look
+weaker than a left wink; raise `wink.strength` or lower `wink.threshold` if so. Not yet re-verified after EyeSync was turned off: how
+`blink.coupleMs` (154) and the per-eye fixed calibration feel in daily use; adjust with `tools/tune.py`.
+
+## Ideas / next steps
+
+- Auto-start frameeyeosc on the headset (`scripts/frameeyeosc.service`, user unit); it currently stops when the headset reboots.
+- Re-run `tools/tune.py record` + `analyze` now that eye sync is off, and tune `wink.*` / `blink.*` from labelled data.
+- Verify the gaze scale (frameeyeosc +-1 == +-45 deg is converted to radians) against a reference.
+- `tools/capture.ps1` (untracked, local) captures only the VRChat window via PrintWindow (never a region screen-grab, which would include other
+  windows) and is useful for judging the avatar's eyes from the desktop mirror in third-person view.
 
 ## Pitfalls
 

@@ -6,3 +6,4 @@ sessions/
 __pycache__/
 *.pyc
 CLAUDE.local.md
+tools/capture.ps1

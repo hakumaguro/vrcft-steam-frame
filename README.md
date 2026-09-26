@@ -77,6 +77,14 @@ The module hot-reloads `steamframe-config.json` (next to the module DLL) within 
 | `blink.holdMs / releasePerSec` | hold the lowest lid value briefly so fast blinks reach full depth |
 | `gaze.scale / invertX / invertY`, `swapEyes` | gaze scaling and orientation fixes |
 
+## Troubleshooting
+
+- **Winking closes both avatar eyes:** the avatar itself may link the eyelids. Look for an "Eye Sync" / "Link eyes" toggle in its menu
+  (some VRCFT avatar templates expose `FT/EyeSync`) and turn it off. The module and VRCFT send the two lids independently.
+- **No module process / no data:** start VRCFT through Steam, make sure the stock SteamLink module is not installed (UDP 9015 clash),
+  and check `%TEMP%\steamframe-module.log`.
+- **frameeyeosc refuses to start:** it needs shared-memory ABI version 4; after a Frame update the layout may have changed.
+
 ## Known limits
 
 - The tracker couples the eyes: closing one eye pulls the other toward half-closed, and in our tests a right-eye
