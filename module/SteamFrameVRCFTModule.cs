@@ -34,7 +34,7 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
 
     private readonly LidCal _calL = new(), _calR = new();
     private float _holdL = 1f, _holdR = 1f;
-    private long _holdUntilL, _holdUntilR;
+    private long _holdUntilL, _holdUntilR, _asymSince, _asymLastSeen;
 
     /// <summary>Per-eye lid calibration. Each eye reports its own "closed" and "open" raw level, so each one tracks
     /// a smoothed floor/ceiling (or uses a fixed calibration from the tuning tool).</summary>
@@ -156,7 +156,17 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
 
         float mol = _calL.Map(f.ol, c.Lid, c.Lid.LeftClosed, c.Lid.LeftOpen);
         float mor = _calR.Map(f.or, c.Lid, c.Lid.RightClosed, c.Lid.RightOpen);
-        Sharpen(ref mol, ref mor, c.Wink);
+        // Blink vs wink: a lopsided closure that has not lasted CoupleMs is a blink -> close both eyes.
+        bool coupled = false;
+        bool asym = c.Blink.CoupleMs > 0 && MathF.Min(mol, mor) < c.Blink.AsymClosed && MathF.Max(mol, mor) > c.Blink.AsymOpen;
+        if (asym)
+        {
+            _asymLastSeen = nowMs;
+            if (_asymSince == 0) _asymSince = nowMs;
+            if (nowMs - _asymSince < c.Blink.CoupleMs) { mol = mor = MathF.Min(mol, mor); coupled = true; }
+        }
+        else if (nowMs - _asymLastSeen > 60) _asymSince = 0;   // small gaps do not restart the timer
+        if (!coupled) Sharpen(ref mol, ref mor, c.Wink);
         float dt = _lastLidTick == 0 ? 0.01f : Math.Min((nowMs - _lastLidTick) / 1000f, 0.1f);
         _lastLidTick = nowMs;
         mol = PeakHold(mol, ref _holdL, ref _holdUntilL, nowMs, dt, c.Blink);

@@ -5,3 +5,4 @@ obj/
 sessions/
 __pycache__/
 *.pyc
+CLAUDE.local.md

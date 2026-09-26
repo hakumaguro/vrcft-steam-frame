@@ -218,23 +218,32 @@ def cmd_analyze(a):
 
     bl = g.get("blinks", [])
     if len(bl) >= 30:
-        avg = [(nL(x[1]) + nR(x[2])) / 2 for x in bl]
-        dips, cur = [], []
-        for v in avg:
-            if v < 0.5:
-                cur.append(v)
+        # A blink shows up as any lid closing (the tracker often reports it lopsided: one lid ~0, the other ~1).
+        ev, cur, gap = [], [], 0
+        for x in bl:
+            l, r = nL(x[1]), nR(x[2])
+            if min(l, r) < 0.30:
+                cur.append((l, r)); gap = 0
             elif cur:
-                dips.append(cur); cur = []
+                gap += 1
+                if gap > 2:
+                    ev.append(cur); cur, gap = [], 0
         if cur:
-            dips.append(cur)
-        dips = [x for x in dips if len(x) <= 15]                # ignore long closures
-        if dips:
-            depth = st.median(min(x) for x in dips)
-            dur = st.median(len(x) for x in dips) * dt * 1000
-            print(f"\nBlinks: {len(dips)} detected, median depth {depth:.2f} (0 = fully closed), median duration {dur:.0f} ms")
-            rec["blink"]["holdMs"] = int(max(60, min(200, dur * 0.6 + (60 if depth > 0.15 else 0))))
-            if depth > 0.25:
-                warn.append(f"blinks only reach {depth:.2f} at the sampling rate; holdMs raised to {rec['blink']['holdMs']}")
+            ev.append(cur)
+        ev = [e for e in ev if len(e) * dt < 0.8]                # longer closures are not blinks
+        if ev:
+            asym = [e for e in ev if max(max(l, r) for l, r in e) > 0.6 and sum(1 for l, r in e if abs(l - r) > 0.4) >= len(e) / 2]
+            durs = sorted(len(e) * dt * 1000 for e in asym)
+            print(f"\nBlinks: {len(ev)} detected; {len(asym)} of them lopsided (one lid closed while the other stayed open)")
+            if durs:
+                print(f"  lopsided duration: median {st.median(durs):.0f} ms, max {durs[-1]:.0f} ms")
+                rec["blink"]["coupleMs"] = int(max(80, min(250, durs[-1] * 1.3 + 30)))
+            sym = [e for e in ev if e not in asym]
+            if sym:
+                print(f"  both-eye blinks: {len(sym)}, median duration {st.median(len(e) * dt * 1000 for e in sym):.0f} ms")
+            rec["blink"]["holdMs"] = int(max(60, min(200, st.median(len(e) for e in ev) * dt * 1000 * 0.6 + 40)))
+            if len(asym) > len(ev) / 2:
+                warn.append("most blinks are reported lopsided by the tracker; blink.coupleMs makes them close both eyes")
         else:
             print("\nBlinks: none detected in the blink step")
 

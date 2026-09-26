@@ -45,6 +45,12 @@ public sealed class ModuleConfig
         /// <summary>Keep a lid at its lowest recent value this long so fast blinks reach full depth.</summary>
         public int HoldMs { get; set; } = 90;
         public float ReleasePerSec { get; set; } = 10f;
+        /// <summary>A lopsided closure (one eye closed, the other open) shorter than this is a blink and closes both eyes;
+        /// a longer one is a wink. The tracker often reports blinks as one lid at 0 and the other at 1. 0 disables.</summary>
+        public int CoupleMs { get; set; } = 140;
+        /// <summary>Normalised lid below this counts as closed, above <see cref="AsymOpen"/> as open, for the lopsided test.</summary>
+        public float AsymClosed { get; set; } = 0.35f;
+        public float AsymOpen { get; set; } = 0.60f;
     }
 
     public sealed class GazeConfig
