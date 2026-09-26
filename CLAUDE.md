@@ -42,7 +42,8 @@ weaker than a left wink; raise `wink.strength` or lower `wink.threshold` if so. 
 
 ## Ideas / next steps
 
-- Auto-start frameeyeosc on the headset (`scripts/frameeyeosc.service`, user unit); it currently stops when the headset reboots.
+- frameeyeosc auto-start is set up on the user's headset as a systemd user unit (`scripts/frameeyeosc.service`) with lingering enabled; a real
+  reboot test has not been done yet. If the PC's address on the Frame's subnet changes, the unit's `--target` must be updated.
 - Re-run `tools/tune.py record` + `analyze` now that eye sync is off, and tune `wink.*` / `blink.*` from labelled data.
 - Verify the gaze scale (frameeyeosc +-1 == +-45 deg is converted to radians) against a reference.
 - `tools/capture.ps1` (untracked, local) captures only the VRChat window via PrintWindow (never a region screen-grab, which would include other
