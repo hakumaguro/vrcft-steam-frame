@@ -75,6 +75,9 @@ The module hot-reloads `steamframe-config.json` (next to the module DLL) within 
 | `lid.deadband` | fraction of the range at each end that reads fully closed / open |
 | `wink.threshold / range / strength` | amplify left/right asymmetry (0 strength = off) |
 | `blink.holdMs / releasePerSec` | hold the lowest lid value briefly so fast blinks reach full depth |
+| `blink.saturatedRaw / glitchMinMs` | the tracker often reports a blink as one lid closed while the other is pinned at its ceiling (raw ~1.0); while that lasts, both eyes close (0 = off) |
+| `blink.coupleMs / asymClosed / asymOpen` | any other lopsided closure shorter than `coupleMs` is a blink and closes both eyes; longer is a wink |
+| `wink.assist` (+ `assistOpen / assistClosed / assistMin / assistPersistMs / assistReleaseMs`) | closing one eye tightens the other, so the tracker reports it partly closed during a wink. When one eye is at its floor and the other stays above its own floor for `assistPersistMs`, show the other eye open. Off by default; it was tuned on one person's face, so check it on yours with `tools/tune.py` |
 | `gaze.scale / invertX / invertY`, `swapEyes` | gaze scaling and orientation fixes |
 
 ## Troubleshooting

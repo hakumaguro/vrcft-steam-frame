@@ -223,7 +223,7 @@ def cmd_analyze(a):
         for x in bl:
             l, r = nL(x[1]), nR(x[2])
             if min(l, r) < 0.30:
-                cur.append((l, r)); gap = 0
+                cur.append((l, r, x[1], x[2])); gap = 0
             elif cur:
                 gap += 1
                 if gap > 2:
@@ -232,18 +232,26 @@ def cmd_analyze(a):
             ev.append(cur)
         ev = [e for e in ev if len(e) * dt < 0.8]                # longer closures are not blinks
         if ev:
-            asym = [e for e in ev if max(max(l, r) for l, r in e) > 0.6 and sum(1 for l, r in e if abs(l - r) > 0.4) >= len(e) / 2]
-            durs = sorted(len(e) * dt * 1000 for e in asym)
-            print(f"\nBlinks: {len(ev)} detected; {len(asym)} of them lopsided (one lid closed while the other stayed open)")
-            if durs:
-                print(f"  lopsided duration: median {st.median(durs):.0f} ms, max {durs[-1]:.0f} ms")
-                rec["blink"]["coupleMs"] = int(max(80, min(250, durs[-1] * 1.3 + 30)))
+            asym = [e for e in ev if max(max(l, r) for l, r, _, _ in e) > 0.6 and sum(1 for l, r, _, _ in e if abs(l - r) > 0.4) >= len(e) / 2]
+            # Glitch signature: the "open" eye is pinned at its raw ceiling while the other lid is closed.
+            SAT = 0.985
+            sat = [e for e in asym if sum(1 for l, r, rl, rr in e if (rr >= SAT and l < 0.35) or (rl >= SAT and r < 0.35)) >= len(e) / 2]
+            plain = [e for e in asym if e not in sat]
+            print(f"\nBlinks: {len(ev)} detected; {len(asym)} lopsided ({len(sat)} pinned at the ceiling, {len(plain)} plain)")
+            if asym:
+                print(f"  lopsided duration: median {st.median(len(e) * dt * 1000 for e in asym):.0f} ms, max {max(len(e) * dt * 1000 for e in asym):.0f} ms")
+            if len(sat) >= max(2, len(asym) / 2):
+                rec["blink"]["saturatedRaw"] = SAT
+                print(f"  -> blink.saturatedRaw {SAT}: those close both eyes for as long as they last, however long")
+            durs = sorted(len(e) * dt * 1000 for e in plain)
+            # only the plain lopsided blinks need the time limit; long values would delay real winks
+            rec["blink"]["coupleMs"] = int(max(100, min(180, (durs[-1] * 1.3 + 30) if durs else 154)))
             sym = [e for e in ev if e not in asym]
             if sym:
                 print(f"  both-eye blinks: {len(sym)}, median duration {st.median(len(e) * dt * 1000 for e in sym):.0f} ms")
-            rec["blink"]["holdMs"] = int(max(60, min(200, st.median(len(e) for e in ev) * dt * 1000 * 0.6 + 40)))
+            rec["blink"]["holdMs"] = int(max(60, min(120, st.median(len(e) for e in ev) * dt * 1000 * 0.6 + 40)))   # long holds delay wink release
             if len(asym) > len(ev) / 2:
-                warn.append("most blinks are reported lopsided by the tracker; blink.coupleMs makes them close both eyes")
+                warn.append("most blinks are reported lopsided by the tracker; blink.saturatedRaw / coupleMs make them close both eyes")
         else:
             print("\nBlinks: none detected in the blink step")
 

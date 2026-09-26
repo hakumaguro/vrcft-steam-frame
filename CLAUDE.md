@@ -40,6 +40,16 @@ Still possible limits: the tracker couples the eyes on a right-eye wink (left li
 weaker than a left wink; raise `wink.strength` or lower `wink.threshold` if so. Not yet re-verified after EyeSync was turned off: how
 `blink.coupleMs` (154) and the per-eye fixed calibration feel in daily use; adjust with `tools/tune.py`.
 
+## Wink/blink pipeline (module `UpdateFromFrame`), in order
+
+per-eye lid calibration (fixed levels from `tune.py analyze --apply`, else adaptive) -> blink glitch rule (`blink.saturatedRaw`: one lid closed
+while the other is pinned at raw ~1.0 for `glitchMinMs` => both close) -> lopsided-closure timer (`blink.coupleMs`) -> wink assist
+(`wink.assist`: one eye at its floor and the other above its floor for `assistPersistMs` => other eye shown open; needed because closing one
+eye tightens the other, e.g. left lid ~0.23 during a right wink vs ~0.14 when both are closed) -> wink sharpening -> peak hold (`blink.holdMs`).
+A "latch on lopsided start" design was tried and abandoned: a right wink drops both lids almost together, so it never armed, and arming on the
+first frame would turn blinks into winks. Validate new rules by replaying labelled sessions (`sessions/*`) offline before deploying.
+The user confirmed (2026-09-26) that blinking, both winks and the assist work well with eye sync off; the user's config has `wink.assist: true`.
+
 ## Ideas / next steps
 
 - frameeyeosc auto-start is set up on the user's headset as a systemd user unit (`scripts/frameeyeosc.service`) with lingering enabled; a real

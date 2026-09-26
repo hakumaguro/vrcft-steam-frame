@@ -38,6 +38,18 @@ public sealed class ModuleConfig
         public float Range { get; set; } = 0.25f;
         /// <summary>0 disables wink sharpening.</summary>
         public float Strength { get; set; } = 1.0f;
+        /// <summary>Wink assist: closing one eye tightens the other, so during a wink the tracker reports the other lid partly closed.
+        /// When one eye is at its floor and the other sits clearly above its own floor for <see cref="AssistPersistMs"/>, treat it
+        /// as a wink and show the other eye open. Blinks are too short to trigger it.</summary>
+        public bool Assist { get; set; }
+        /// <summary>Openness the assisted eye is shown at (0..1).</summary>
+        public float AssistOpen { get; set; } = 0.95f;
+        /// <summary>Mapped lid value at or below this counts as fully closed.</summary>
+        public float AssistClosed { get; set; } = 0.06f;
+        /// <summary>The other eye must be above this mapped value (i.e. above its closed floor) to count as "partly there".</summary>
+        public float AssistMin { get; set; } = 0.08f;
+        public int AssistPersistMs { get; set; } = 150;
+        public int AssistReleaseMs { get; set; } = 120;
     }
 
     public sealed class BlinkConfig
@@ -51,6 +63,12 @@ public sealed class ModuleConfig
         /// <summary>Normalised lid below this counts as closed, above <see cref="AsymOpen"/> as open, for the lopsided test.</summary>
         public float AsymClosed { get; set; } = 0.35f;
         public float AsymOpen { get; set; } = 0.60f;
+        /// <summary>The tracker reports many blinks as one lid closed while the other is pinned at its ceiling (raw ~1.0).
+        /// While that signature lasts, both eyes close (no time limit). A real wink keeps the open eye near its normal level.
+        /// 0 disables.</summary>
+        public float SaturatedRaw { get; set; } = 0.985f;
+        /// <summary>The glitch signature must last this long before it counts, so a single saturated frame in a real wink is ignored.</summary>
+        public int GlitchMinMs { get; set; } = 40;
     }
 
     public sealed class GazeConfig
