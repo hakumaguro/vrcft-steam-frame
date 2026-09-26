@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>SteamFrameVRCFTModule</AssemblyName>
+    <VrcftDir Condition="'$(VrcftDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\VRCFaceTracking</VrcftDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="VRCFaceTracking.Core"><HintPath>$(VrcftDir)\VRCFaceTracking.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="VRCFaceTracking.SDK"><HintPath>$(VrcftDir)\VRCFaceTracking.SDK.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Microsoft.Extensions.Logging.Abstractions"><HintPath>$(VrcftDir)\Microsoft.Extensions.Logging.Abstractions.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>

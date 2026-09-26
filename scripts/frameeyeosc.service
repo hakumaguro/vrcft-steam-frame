@@ -1,0 +1,14 @@
+# Optional: start frameeyeosc automatically on the headset.
+#   mkdir -p ~/.config/systemd/user && cp frameeyeosc.service ~/.config/systemd/user/
+#   sed -i 's/PC_IP/<your PC address>/' ~/.config/systemd/user/frameeyeosc.service
+#   systemctl --user daemon-reload && systemctl --user enable --now frameeyeosc
+[Unit]
+Description=Steam Frame eye tracking to OSC (frameeyeosc)
+
+[Service]
+ExecStart=%h/frameeyeosc/target/release/frameeyeosc --target PC_IP:9020
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
