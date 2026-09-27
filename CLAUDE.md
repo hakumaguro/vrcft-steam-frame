@@ -5,7 +5,7 @@ Eye tracking for the Steam Frame in VRChat via VRCFaceTracking (VRCFT). Read `RE
 
 ## Current state (2026-09-27)
 
-- Released **v0.2.0**; **0.2.1** (module.json fix for the Module Registry crash) is committed (GitHub release with a prebuilt-DLL zip). Working end to end on the author's setup: per-eye gaze, blinks, both
+- Latest release **v0.2.1** (2026-09-27; fixes the Module Registry crash via a complete `module.json`), with a prebuilt-DLL zip. Working end to end on the author's setup: per-eye gaze, blinks, both
   winks, wink assist; frameeyeosc auto-starts on the headset and survived a real reboot; `doctor.ps1` reports "All good".
 - `setup.ps1 -Headset` (menu 2) was run for real on 2026-09-27 against an already-set-up Frame: SSH login, target kept, build no-op,
   unit refreshed, service active, doctor "All good"; a second run changed nothing. Still never exercised: the first-time path on a fresh
