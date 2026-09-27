@@ -36,6 +36,7 @@ exit /b 0
 :headset
 echo   The headset needs SSH enabled. Its address is on the headset under Settings, Network
 echo   (or use the one you connect with in WinSCP / a terminal).
+set "HS="
 set /p "HS=  Headset login (for example steamos@192.168.1.50): "
 if "%HS%"=="" goto menu
 %PS% scripts\setup.ps1 -Headset %HS%

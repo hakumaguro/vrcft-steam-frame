@@ -38,6 +38,7 @@ $st = Read-ModuleStatus
 if ($vrcftRunning -and $moduleProc) {
   if (-not $st -or $st.AgeMs -gt 5000) {
     if (-not $st) { Fail "the installed module reports no status (older version, or it never started)" "The Steam Frame module is outdated or not active. Run setup." "run setup to install the current version" }
+    elseif ($st.startError) { Fail "the Steam Frame module is idle: $($st.startError)" "The Steam Frame module could not start. See the screen." "" }
     else { Fail "the Steam Frame module is not active (status is $([int]($st.AgeMs/1000)) s old)" "The Steam Frame module is not active." "check the Modules page in VRCFaceTracking; if another module claims eye tracking, disable it" }
   } else {
     if ($st.startError) { Warn "module reports: $($st.startError)" "The module reported a start problem. See the screen." "" }

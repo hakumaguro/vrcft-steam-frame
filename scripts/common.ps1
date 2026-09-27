@@ -153,6 +153,19 @@ function Find-DotnetSdk10 {
   return $null
 }
 
+# Where the headset should send. Keeps an existing service target only while it is still one of this PC's IPv4
+# addresses (DHCP can change it); otherwise uses the address the headset's SSH session came from.
+function Select-HeadsetTarget {
+  param([string]$Override, [string]$Existing, [string]$Client, [string[]]$LocalIps)
+  if (-not $LocalIps) { $LocalIps = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object { $_.IPAddress }) }
+  if ($Override) { return @{ Target = $Override; Reason = "as requested" } }
+  $old = ""
+  if ($Existing) { $old = ($Existing -split ':')[0] }
+  if ($old -and ($LocalIps -contains $old)) { return @{ Target = $old; Reason = "keeping the existing target $old (still this PC's address)" } }
+  if ($old) { return @{ Target = $Client; Reason = "the old target $old is no longer this PC's address; switching to $Client" } }
+  return @{ Target = $Client; Reason = "the headset reaches this PC at $Client" }
+}
+
 function Write-Step { param([string]$State, [string]$Text)
   $color = @{ ok = "Green"; done = "Green"; warn = "Yellow"; fail = "Red"; would = "Cyan"; skip = "DarkGray"; info = "Gray" }[$State]
   if (-not $color) { $color = "Gray" }

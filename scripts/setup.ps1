@@ -217,7 +217,9 @@ else {
   if ($DryRun) { Write-Step would "add an inbound UDP 9020 allow rule for the module process (admin prompt)" }
   elseif (Ask "Add a firewall rule allowing UDP 9020 to the module? (Windows will ask for admin)") {
     $cmd = "New-NetFirewallRule -DisplayName 'Steam Frame eye tracking (VRCFT module)' -Direction Inbound -Action Allow -Protocol UDP -LocalPort 9020 -Program '$($fw.Exe)' -Profile Any"
-    Start-Process powershell -Verb RunAs -Wait -ArgumentList "-NoProfile", "-Command", $cmd
+    # -EncodedCommand: Start-Process joins arguments without quoting, which breaks paths with spaces
+    $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd))
+    Start-Process powershell -Verb RunAs -Wait -ArgumentList "-NoProfile", "-EncodedCommand", $enc
     if ((Test-ModuleFirewall $vrcft).State -eq "ok") { Write-Step done "firewall rule added"; $changed += "firewall rule" }
     else { Write-Step warn "firewall rule not confirmed (admin prompt declined?)" }
   }
@@ -246,12 +248,14 @@ if ($Headset) {
     # copy the scripts first; remote commands stay free of quotes (Windows PowerShell 5.1 mangles them)
     & ssh @sshOpts -o BatchMode=yes $Headset "mkdir -p ~/steamframe"
     & scp @sshOpts -q "$root\scripts\headset-setup.sh" "$root\scripts\headset-install.sh" "$root\scripts\frameeyeosc.service" "${Headset}:steamframe/"
+    & ssh @sshOpts -o BatchMode=yes $Headset 'sed -i s/\r$// ~/steamframe/*'
     $info = & ssh @sshOpts -o BatchMode=yes $Headset "bash ~/steamframe/headset-install.sh --info"
     $client = (($info | Where-Object { $_ -like "CLIENT=*" }) -replace '^CLIENT=', '')
     $unitTarget = (($info | Where-Object { $_ -like "UNIT=*" }) -replace '^UNIT=', '')
-    $target = $HeadsetTarget
-    if (-not $target -and $unitTarget) { $target = ($unitTarget -split ':')[0]; Write-Step ok "keeping the existing target $unitTarget" }
-    if (-not $target) { $target = $client; Write-Step info "the headset reaches this PC at $client; using it" }
+    $pick = Select-HeadsetTarget -Override $HeadsetTarget -Existing $unitTarget -Client $client
+    $target = $pick.Target
+    Write-Step info $pick.Reason
+    if (-not $target) { Write-Step fail "could not work out this PC's address as seen from the headset; pass -HeadsetTarget <PC-IP>"; exit 1 }
     & ssh @sshOpts -o BatchMode=yes $Headset "bash ~/steamframe/headset-install.sh $target 9020"
     if ($LASTEXITCODE -eq 0) { Write-Step done "headset: frameeyeosc installed and sending to ${target}:9020"; $changed += "headset service" }
     else { Write-Step fail "headset setup failed (see the output above)" }
