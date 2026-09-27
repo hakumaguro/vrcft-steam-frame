@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Tuning tool for the Steam Frame VRCFT module (stdlib only, Windows).
 
-  tune.py record            guided calibration session (spoken prompts + timestamped labels)
+  tune.py calibrate         record + analyse + apply in one go, with spoken prompts and a spoken result
+  tune.py record            guided calibration session only (spoken prompts + timestamped labels)
   tune.py analyze [DIR]     analyse a session, print findings and a recommended config
   tune.py analyze [DIR] --apply    ...and write the recommendation into the module's config (hot-reloaded)
   tune.py watch             live view of raw and output eyelid values
   tune.py show              print the module's current config
 
-The module appends samples to %TEMP%\\steamframe-trace.csv. `record` speaks instructions (so you can follow them
-inside the headset), writes labels for every step, and stores trace + labels under sessions/<timestamp>/.
+The module writes samples to %TEMP%\\steamframe-trace.csv only while `trace` is on in its config; this tool turns it
+on for as long as it needs it and restores it afterwards.
 """
 import argparse
 import csv
@@ -45,7 +46,8 @@ PROTOCOL = [
     ("look", 8, "Look around. Left, right, up, down."),
     ("open", 2, "Done."),
 ]
-GUARD_START, GUARD_END = 1.3, 0.2   # seconds skipped at each segment edge (prompt + reaction time)
+GUARD_START, GUARD_END = 1.3, 0.2
+SPOKEN = []   # short sentences for the spoken result of analyze   # seconds skipped at each segment edge (prompt + reaction time)
 
 
 # ---- helpers ---------------------------------------------------------------------------------------
@@ -84,6 +86,59 @@ def config_path():
     return os.path.join(os.path.dirname(dlls[0]), "steamframe-config.json") if dlls else None
 
 
+def _load_cfg(cp):
+    return json.load(open(cp, encoding="utf-8-sig")) if os.path.exists(cp) else {}
+
+
+def _save_cfg(cp, cfg):
+    with open(cp, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
+
+
+class Tracing:
+    """Turn the module's sample trace on while inside the `with` block, then put the setting back as it was."""
+
+    def __enter__(self):
+        self.cp = config_path()
+        if not self.cp:
+            speak_wait("The Steam Frame module is not installed. Run setup first.")
+            sys.exit("The Steam Frame module is not installed (no config found). Run setup first.")
+        cfg = _load_cfg(self.cp)
+        self.had = "trace" in cfg
+        self.prev = cfg.get("trace")
+        if cfg.get("trace") is not True:
+            cfg["trace"] = True
+            _save_cfg(self.cp, cfg)
+        return self
+
+    def __exit__(self, *exc):
+        cfg = _load_cfg(self.cp)
+        if self.had:
+            cfg["trace"] = self.prev
+        else:
+            cfg.pop("trace", None)
+        _save_cfg(self.cp, cfg)
+
+
+def wait_for_samples(timeout=4.0):
+    """True once the trace grows, i.e. frameeyeosc data is reaching the module with tracing on."""
+    t_end = time.time() + timeout
+    size0 = os.path.getsize(TRACE) if os.path.exists(TRACE) else 0
+    while time.time() < t_end:
+        time.sleep(0.3)
+        if os.path.exists(TRACE) and os.path.getsize(TRACE) != size0:
+            return True
+    return False
+
+
+def speak_wait(text):
+    p = speak(text)
+    try:
+        p.wait(timeout=30)
+    except Exception:
+        pass
+
+
 def read_trace(path):
     """FRAME rows: time,FRAME,lx,ly,rx,ry,rawL,rawR,outL,outR,..."""
     rows = []
@@ -105,12 +160,15 @@ def pct(v, p):
 # ---- record ----------------------------------------------------------------------------------------
 
 def cmd_record(a):
-    if not os.path.exists(TRACE):
-        sys.exit("No trace file. Is VRCFT running with the module and frameeyeosc sending?")
-    size0 = os.path.getsize(TRACE)
-    time.sleep(1.0)
-    if os.path.getsize(TRACE) <= size0:
-        sys.exit("The trace is not growing: no frameeyeosc data reaching the module. Fix that first.")
+    with Tracing():
+        if not wait_for_samples():
+            speak_wait("No eye data from the headset, so calibration cannot start. Run the status check.")
+            sys.exit("No headset eye data is reaching the module (frameeyeosc not sending, or VRCFaceTracking not running).\n"
+                     "Run the status check: powershell -ExecutionPolicy Bypass -File scripts\\doctor.ps1")
+        return _record(a)
+
+
+def _record(a):
     out = os.path.join(SESSIONS, datetime.now().strftime("%Y%m%d-%H%M%S"))
     os.makedirs(out, exist_ok=True)
     total = sum(s for _, s, _ in PROTOCOL)
@@ -134,14 +192,19 @@ def cmd_record(a):
         w.writerows(labels)
     # keep only this session's part of the trace
     lo, hi = tod(stamp(t_start)) - 1, tod(stamp()) + 1
-    with open(TRACE, newline="", encoding="utf-8", errors="replace") as src, open(os.path.join(out, "trace.csv"), "w", newline="") as dst:
-        for line in src:
-            try:
-                if lo <= tod(line.split(",", 1)[0]) <= hi:
-                    dst.write(line)
-            except ValueError:
-                pass
+    with open(os.path.join(out, "trace.csv"), "w", newline="") as dst:
+        for path in (TRACE + ".old", TRACE):          # the module rotates the trace at 20 MB
+            if not os.path.exists(path):
+                continue
+            with open(path, newline="", encoding="utf-8", errors="replace") as src:
+                for line in src:
+                    try:
+                        if lo <= tod(line.split(",", 1)[0]) <= hi:
+                            dst.write(line)
+                    except ValueError:
+                        pass
     print(f"\nSaved. Analyse with:  python tools/tune.py analyze \"{out}\"")
+    return out
 
 
 # ---- analyze ---------------------------------------------------------------------------------------
@@ -168,6 +231,7 @@ def cmd_analyze(a):
     need = ["open", "closed"]
     for n in need:
         if len(g.get(n, [])) < 10:
+            speak_wait("Not enough data in that recording. Please calibrate again.")
             sys.exit(f"Not enough '{n}' samples ({len(g.get(n, []))}). Redo the recording.")
     dt = st.median(b[0] - a_[0] for a_, b in zip(rows, rows[1:]) if 0 < b[0] - a_[0] < 0.5)
     print(f"Session {d}: {len(rows)} samples, median interval {dt * 1000:.0f} ms\n")
@@ -201,6 +265,7 @@ def cmd_analyze(a):
         lo, hi = (l, r) if want_low == "L" else (r, l)
         ok = lo < 0.30 and hi > 0.60
         print(f"  {name:<11} left {l:5.2f}  right {r:5.2f}   -> {'OK' if ok else 'FAIL'}")
+        SPOKEN.append(("Left" if want_low == "L" else "Right") + " wink " + ("works." if ok else "is weak; the other eye follows."))
         if ok:
             sep.append(hi - lo)
         elif want_low == "L" and r < l - 0.3:
@@ -270,6 +335,8 @@ def cmd_analyze(a):
         with open(cp, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2)
         print(f"\nApplied to {cp} (backup .bak). The module reloads it within a second.")
+        if a.speak:
+            speak_wait("Calibration applied. " + " ".join(SPOKEN))
     else:
         print("\n(not applied; add --apply to write it to the module config)")
 
@@ -282,9 +349,19 @@ def bar(v, w=24):
 
 
 def cmd_watch(a):
+    with Tracing():
+        _watch()
+
+
+def _watch():
     print("Live eyelids (Ctrl+C to stop). raw = tracker, out = what VRCFT gets.")
+    if not wait_for_samples():
+        print("(no headset data yet; waiting)")
     try:
         while True:
+            if not os.path.exists(TRACE):
+                time.sleep(0.3)
+                continue
             with open(TRACE, "rb") as f:
                 f.seek(max(0, os.path.getsize(TRACE) - 600))
                 lines = f.read().decode("utf-8", "replace").splitlines()
@@ -306,11 +383,18 @@ def cmd_show(a):
         print(open(cp, encoding="utf-8-sig").read())
 
 
+def cmd_calibrate(a):
+    out = cmd_record(a)
+    a.dir, a.apply, a.speak = out, True, True
+    cmd_analyze(a)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
+    c = sub.add_parser("calibrate"); c.add_argument("--lead", type=int, default=10, help="seconds to put the headset on"); c.set_defaults(fn=cmd_calibrate)
     r = sub.add_parser("record"); r.add_argument("--lead", type=int, default=8, help="seconds to put the headset on"); r.set_defaults(fn=cmd_record)
-    an = sub.add_parser("analyze"); an.add_argument("dir", nargs="?"); an.add_argument("--apply", action="store_true"); an.set_defaults(fn=cmd_analyze)
+    an = sub.add_parser("analyze"); an.add_argument("dir", nargs="?"); an.add_argument("--apply", action="store_true"); an.add_argument("--speak", action="store_true", help="speak the result"); an.set_defaults(fn=cmd_analyze)
     sub.add_parser("watch").set_defaults(fn=cmd_watch)
     sub.add_parser("show").set_defaults(fn=cmd_show)
     a = ap.parse_args()

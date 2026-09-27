@@ -21,11 +21,29 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
 
     private static readonly string TracePath = Path.Combine(Path.GetTempPath(), "steamframe-trace.csv");
     private static readonly string LogPath = Path.Combine(Path.GetTempPath(), "steamframe-module.log");
-    private static void FileLog(string m) { try { File.AppendAllText(LogPath, $"{DateTime.Now:HH:mm:ss.fff} {m}{Environment.NewLine}"); } catch { } }
+    private static readonly string StatusPath = Path.Combine(Path.GetTempPath(), "steamframe-status.json");
+    private const long MaxLogBytes = 1_000_000, MaxTraceBytes = 20_000_000;
+
+    /// <summary>Append to a file, moving it to *.old once it passes maxBytes so it never grows without limit.</summary>
+    private static void AppendCapped(string path, string text, long maxBytes)
+    {
+        try
+        {
+            var fi = new FileInfo(path);
+            if (fi.Exists && fi.Length > maxBytes) File.Move(path, path + ".old", overwrite: true);
+            File.AppendAllText(path, text);
+        }
+        catch { }
+    }
+
+    private static void FileLog(string m) => AppendCapped(LogPath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {m}{Environment.NewLine}", MaxLogBytes);
+
+    private string _source = "";
+    private long _lastStatus;
+    private string _startError = "";
 
     private OscReceiver? _osc, _frame;
-    private bool _usingFrame;
-    private long _lastLog, _lastTrace, _lastCfgCheck, _lastLidTick;
+    private long _lastTrace, _lastCfgCheck, _lastLidTick;
     private float _closed, _gx, _gy;
 
     private string _cfgPath = "steamframe-config.json";
@@ -116,6 +134,8 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
         FileLog($"Initialize eyeAvailable={eyeAvailable} exprAvailable={expressionAvailable}");
         if (!eyeAvailable)
         {
+            _startError = "Eye tracking is already claimed by another VRCFT module (for example a webcam module); disable it in VRCFT. ";
+            WriteStatus(Environment.TickCount64, force: true);
             Logger.LogInformation("Eye tracking already claimed by another module, staying idle.");
             return (false, false);
         }
@@ -124,15 +144,26 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
         _cfgPath = Path.Combine(string.IsNullOrEmpty(loc) ? "." : Path.GetDirectoryName(loc) ?? ".", "steamframe-config.json");
         ReloadConfig(force: true);
 
-        try { _osc = new OscReceiver(Logger, SteamLinkPort); }
+        // Each source is optional: the module works as long as at least one port can be opened.
+        try { _frame = new OscReceiver(Logger, FramePort, System.Net.IPAddress.Any); FileLog($"listening on 0.0.0.0:{FramePort} (frameeyeosc)"); }
         catch (Exception e)
         {
-            Logger.LogError("Cannot listen on UDP {0}: {1}. Is the SteamLink module still installed?", SteamLinkPort, e.Message);
+            _startError += $"UDP {FramePort} (frameeyeosc) is in use: {e.Message}. ";
+            Logger.LogWarning("Cannot listen on UDP {0} for frameeyeosc: {1}", FramePort, e.Message);
+        }
+        try { _osc = new OscReceiver(Logger, SteamLinkPort); FileLog($"listening on 127.0.0.1:{SteamLinkPort} (Steam Link)"); }
+        catch (Exception e)
+        {
+            _startError += $"UDP {SteamLinkPort} (Steam Link) is in use, probably by the stock SteamLink VRCFT module; uninstall it. ";
+            Logger.LogWarning("Cannot listen on UDP {0}: {1}. Is the stock SteamLink module still installed? Continuing without the Steam Link fallback.", SteamLinkPort, e.Message);
+        }
+        FileLog($"config {_cfgPath}");
+        WriteStatus(Environment.TickCount64, force: true);
+        if (_frame == null && _osc == null)
+        {
+            Logger.LogError("Steam Frame module: no data source could be opened. {0}", _startError);
             return (false, false);
         }
-        try { _frame = new OscReceiver(Logger, FramePort, System.Net.IPAddress.Any); FileLog($"listening on 0.0.0.0:{FramePort} (frameeyeosc)"); }
-        catch (Exception e) { FileLog($"frameeyeosc port {FramePort} unavailable: {e.Message}"); }
-        FileLog($"listening on {SteamLinkPort}; config {_cfgPath}");
         return (true, false);
     }
 
@@ -154,24 +185,24 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
         Thread.Sleep(10);
         long t0 = Environment.TickCount64;
         if (t0 - _lastCfgCheck > 1000) { _lastCfgCheck = t0; ReloadConfig(); }
-        if (t0 - _lastLog > 2000 && (Status != ModuleState.Active || _osc == null))
-        { _lastLog = t0; FileLog($"Update skipped: Status={Status} osc={(_osc != null)}"); }
-        if (Status != ModuleState.Active || _osc == null) return;
+        WriteStatus(t0);
+        if (Status != ModuleState.Active || (_osc == null && _frame == null)) return;
 
         if (_frame != null && t0 - _frame.LastAnyTicks < 500 && FrameActive(out var f))
         {
+            SetSource("frameeyeosc");
             UpdateFromFrame(f, t0);
             return;
         }
-        if (_usingFrame) { _usingFrame = false; FileLog("frameeyeosc data lost, falling back to Steam Link stream"); }
-        UpdateFromSteamLink();
+        bool steamLinkFresh = _osc != null && _osc.LastPacketTicks != 0 && t0 - _osc.LastPacketTicks < 1000;
+        SetSource(steamLinkFresh ? "steamlink" : "none");
+        if (_osc != null) UpdateFromSteamLink();
     }
 
     // ---- source 1: frameeyeosc (per-eye) -------------------------------------------------------------
 
     private void UpdateFromFrame((float lx, float ly, float rx, float ry, float ol, float or) f, long nowMs)
     {
-        if (!_usingFrame) { _usingFrame = true; FileLog("using frameeyeosc data (per-eye)"); }
         var c = _cfg;
         if (c.SwapEyes) f = (f.rx, f.ry, f.lx, f.ly, f.or, f.ol);
 
@@ -219,10 +250,10 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
         e.Left.PupilDiameter_MM = 5f; e.Right.PupilDiameter_MM = 5f;   // unsupported, but must be set
         e._maxDilation = 10; e._minDilation = 0;
 
-        if (nowMs - _lastTrace >= 30)
+        if (c.Trace && nowMs - _lastTrace >= 30)   // off by default; tools/tune.py switches it on while it needs samples
         {
             _lastTrace = nowMs;
-            try { File.AppendAllText(TracePath, $"{DateTime.Now:HH:mm:ss.fff},FRAME,{f.lx:F3},{f.ly:F3},{f.rx:F3},{f.ry:F3},{f.ol:F3},{f.or:F3},{mol:F3},{mor:F3},{_calL.Lo:F2},{_calL.Hi:F2},{_calR.Lo:F2},{_calR.Hi:F2}{Environment.NewLine}"); } catch { }
+            AppendCapped(TracePath, $"{DateTime.Now:HH:mm:ss.fff},FRAME,{f.lx:F3},{f.ly:F3},{f.rx:F3},{f.ry:F3},{f.ol:F3},{f.or:F3},{mol:F3},{mor:F3},{_calL.Lo:F2},{_calL.Hi:F2},{_calR.Lo:F2},{_calR.Hi:F2}{Environment.NewLine}", MaxTraceBytes);
         }
     }
 
@@ -266,13 +297,42 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
         eye.Left.Openness = open; eye.Right.Openness = open;
         eye.Left.PupilDiameter_MM = 5f; eye.Right.PupilDiameter_MM = 5f;
         eye._maxDilation = 10; eye._minDilation = 0;
+    }
 
-        long now = Environment.TickCount64;
-        if (now - _lastLog > 5000)
+    // ---- status for tools/tune.py doctor ---------------------------------------------------------------
+
+    private void SetSource(string s)
+    {
+        if (s == _source) return;
+        _source = s;
+        FileLog(s switch
         {
-            _lastLog = now;
-            FileLog($"steamlink: packets={osc.Packets} gaze=({_gx:F3},{_gy:F3}) closed={_closed:F2}");
-        }
+            "frameeyeosc" => "eye data: frameeyeosc (per-eye gaze and eyelids)",
+            "steamlink" => "eye data: Steam Link fallback (gaze only, no frameeyeosc data)",
+            _ => "eye data: none (headset off, or nothing is sending)",
+        });
+    }
+
+    /// <summary>Small JSON snapshot (once a second) so the doctor can tell whether data is flowing without a trace.</summary>
+    private void WriteStatus(long now, bool force = false)
+    {
+        if (!force && now - _lastStatus < 1000) return;
+        _lastStatus = now;
+        static long Age(long now, long t) => t == 0 ? -1 : now - t;
+        var status = new Dictionary<string, object?>
+        {
+            ["updated"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            ["version"] = typeof(SteamFrameVRCFTModule).Assembly.GetName().Version?.ToString(),
+            ["source"] = _source == "" ? "starting" : _source,
+            ["frameListening"] = _frame != null,
+            ["frameAgeMs"] = _frame == null ? -1 : Age(now, _frame.LastAnyTicks),
+            ["steamLinkListening"] = _osc != null,
+            ["steamLinkAgeMs"] = _osc == null ? -1 : Age(now, _osc.LastPacketTicks),
+            ["trace"] = _cfg.Trace,
+            ["config"] = _cfgPath,
+            ["startError"] = _startError,
+        };
+        try { File.WriteAllText(StatusPath, System.Text.Json.JsonSerializer.Serialize(status)); } catch { }
     }
 
     public override void Teardown() { _osc?.Dispose(); _frame?.Dispose(); }

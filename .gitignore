@@ -7,3 +7,4 @@ __pycache__/
 *.pyc
 CLAUDE.local.md
 tools/capture.ps1
+dist/

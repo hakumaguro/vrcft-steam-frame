@@ -4,6 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>SteamFrameVRCFTModule</AssemblyName>
+    <Version>0.2.0</Version>
     <VrcftDir Condition="'$(VrcftDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\VRCFaceTracking</VrcftDir>
   </PropertyGroup>
   <ItemGroup>

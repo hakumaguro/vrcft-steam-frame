@@ -12,6 +12,8 @@ public sealed class ModuleConfig
     public GazeConfig Gaze { get; set; } = new();
     /// <summary>Swap left/right eyes (if the headset reports them the other way round).</summary>
     public bool SwapEyes { get; set; }
+    /// <summary>Write 30 ms samples to %TEMP%\steamframe-trace.csv. tools/tune.py turns this on while it records or watches.</summary>
+    public bool Trace { get; set; }
 
     public sealed class LidConfig
     {

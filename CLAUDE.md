@@ -7,8 +7,17 @@ Eye tracking for the Steam Frame in VRChat via VRCFaceTracking (VRCFT). Read `RE
 
 - `module/` C# (net10.0) VRCFT module. `SteamFrameVRCFTModule.cs` (logic), `OscReceiver.cs` (UDP OSC parser),
   `ModuleConfig.cs` (hot-reloaded `steamframe-config.json`). Built against the installed VRCFT DLLs (`VrcftDir` in the csproj).
-- `tools/tune.py` guided calibration (`record`, `analyze [--apply]`, `watch`, `show`). Stdlib only, Windows.
-- `scripts/` `deploy-module.ps1` (build + install + relaunch VRCFT), `headset-setup.sh`, `headset-run.sh`, `frameeyeosc.service`.
+- `Start Here.cmd` user menu (CRLF!): setup, headset setup, status, calibrate, live view, config folder, uninstall.
+- `tools/tune.py` guided calibration (`calibrate` = record+analyze+apply with speech, `record`, `analyze [--apply] [--speak]`, `watch`,
+  `show`). Stdlib only, Windows. It turns the module's `trace` config flag on only while it needs samples (class `Tracing`).
+- `scripts/` (Windows PowerShell 5.1 compatible, share `common.ps1`):
+  `setup.ps1` idempotent installer (`-DryRun`, `-Yes`, `-Uninstall`, `-Headset user@host`; test flags `-VrcftData <sandbox>` +
+  `-NoRestart`), `doctor.ps1` spoken health check (reads `%TEMP%\steamframe-status.json` written by the module every second),
+  `deploy-module.ps1` dev shortcut, `package.ps1` release zip with prebuilt DLL (setup uses a DLL found next to `Start Here.cmd`).
+  Headset side: `headset-install.sh` (`--info`, or `<PC-IP> [port]`: build + systemd user unit + linger), `headset-setup.sh`,
+  `headset-run.sh`, `frameeyeosc.service`.
+- Test setup changes against a sandbox (copy of a VRCFT data folder + `-VrcftData -NoRestart`), never first on the real install.
+  Remote commands passed to `ssh` from PowerShell 5.1 must not contain double quotes (they get mangled); put logic in `headset-install.sh`.
 
 ## Data flow
 
@@ -79,8 +88,10 @@ synthetic frameeyeosc stream to UDP 9020 (open/closed lid steps) and parse OSC b
 
 ## Diagnostics
 
-`%TEMP%\steamframe-module.log` (events) and `%TEMP%\steamframe-trace.csv` (30 ms samples:
-`time,FRAME,lx,ly,rx,ry,rawL,rawR,outL,outR,loL,hiL,loR,hiR`). `tune.py record` saves labelled sessions under `sessions/` (git-ignored).
+`%TEMP%\steamframe-status.json` (module state, 1 s; `source` = frameeyeosc / steamlink / none, port states, `startError`),
+`%TEMP%\steamframe-module.log` (state changes only, rotated to `.old` at 1 MB) and `%TEMP%\steamframe-trace.csv` (only while config
+`trace` is true; 30 ms samples `time,FRAME,lx,ly,rx,ry,rawL,rawR,outL,outR,loL,hiL,loR,hiR`, rotated at 20 MB).
+`tune.py record` saves labelled sessions under `sessions/` (git-ignored).
 
 ## Conventions
 
