@@ -29,6 +29,7 @@ Something not working? Choose **3**: it checks every part and says what is wrong
 
 | You notice | Do this |
 |---|---|
+| VRCFaceTracking closes itself when you open **Module Registry** | Fixed in 0.2.1: run menu **1** once (it repairs the module's `module.json`, which lacked the links that page needs). |
 | Winking closes **both** avatar eyes | The avatar links its eyelids: open the avatar menu and turn off **Eye Sync** / "Link eyes". |
 | Status says "no eye data" | Wear the headset and connect Steam Link. For eyelids, the headset part must run: menu **2** sets it up again. |
 | Status says "only the Steam Link fallback" | Gaze works, eyelids are guessed. The headset part is not sending: menu **2**, or on the headset `systemctl --user status frameeyeosc`. |

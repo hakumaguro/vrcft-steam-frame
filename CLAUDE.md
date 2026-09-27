@@ -5,7 +5,7 @@ Eye tracking for the Steam Frame in VRChat via VRCFaceTracking (VRCFT). Read `RE
 
 ## Current state (2026-09-27)
 
-- Released **v0.2.0** (GitHub release with a prebuilt-DLL zip). Working end to end on the author's setup: per-eye gaze, blinks, both
+- Released **v0.2.0**; **0.2.1** (module.json fix for the Module Registry crash) is committed (GitHub release with a prebuilt-DLL zip). Working end to end on the author's setup: per-eye gaze, blinks, both
   winks, wink assist; frameeyeosc auto-starts on the headset and survived a real reboot; `doctor.ps1` reports "All good".
 - `setup.ps1 -Headset` (menu 2) was run for real on 2026-09-27 against an already-set-up Frame: SSH login, target kept, build no-op,
   unit refreshed, service active, doctor "All good"; a second run changed nothing. Still never exercised: the first-time path on a fresh
@@ -67,7 +67,7 @@ first frame would turn blinks into winks. Validate new rules by replaying labell
 
 ## Releasing
 
-1. Bump `<Version>` in `module/SteamFrameVRCFTModule.csproj` (and `Version` in `setup.ps1`'s module.json block).
+1. Bump `<Version>` in `module/SteamFrameVRCFTModule.csproj` and `$script:ModuleVersion` in `scripts/common.ps1`.
 2. Test on the headset (doctor "All good", user checks blink/wink in VRChat), commit, push.
 3. `powershell -ExecutionPolicy Bypass -File scripts\package.ps1` -> `dist\vrcft-steam-frame-<ver>.zip`; unzip it and run
    `scripts\setup.ps1 -DryRun` from there to confirm it picks up the prebuilt DLL.
@@ -87,6 +87,10 @@ first frame would turn blinks into winks. Validate new rules by replaying labell
 ## Pitfalls
 
 - **Start VRCFT through Steam** (`steam://rungameid/3329480`). Launching `VRCFaceTracking.exe` directly never spawns the module process.
+- VRCFT's **Module Registry page crashes the whole app** (WinUI `0xc000027b`, stowed E_INVALIDARG) if any installed module's `module.json`
+  lacks `DownloadUrl`/`ModulePageUrl`. Reproduced and bisected 2026-09-27 with `%TEMP%\click_registry.ps1`-style UI Automation (select the
+  "Module Registry" list item, check the process survives 8 s). `Write-ModuleJson` in `common.ps1` writes every field; setup repairs old files.
+  Bump `$script:ModuleVersion` in `common.ps1` together with the csproj `<Version>`.
 - The module DLL is locked while VRCFT runs; setup/deploy close VRCFT first.
 - `dotnet` on PATH may be runtime-only; the build needs a .NET 10 SDK (`Find-DotnetSdk10` in `common.ps1` checks `~\.dotnet` too).
 - Windows PowerShell 5.1: no ternary/`??`; `ConvertTo-Json` needs `-Depth`; stderr redirection of native tools under

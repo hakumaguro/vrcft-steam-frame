@@ -167,6 +167,15 @@ if ($ours) {
 if (-not $dllChanged) { Write-Step ok "module is up to date" }
 else { $needVrcftRestart = $true }
 
+$mjFix = $false
+if ($ours) {
+  try { $mj = Get-Content (Join-Path $ours.Dir "module.json") -Raw | ConvertFrom-Json } catch { $mj = $null }
+  if (-not $mj -or -not $mj.ModulePageUrl -or -not $mj.DownloadUrl -or $mj.Version -ne $script:ModuleVersion) {
+    Write-Step warn "module.json is incomplete or outdated (missing links make VRCFaceTracking's Module Registry page crash)"
+    $mjFix = $true; $needVrcftRestart = $true
+  } else { Write-Step ok "module.json is complete" }
+}
+
 # apply the VRCFT-side changes together, with VRCFT closed (it holds the DLL and rewrites its settings on exit)
 if ($needVrcftRestart) {
   $wasRunning = [bool](Get-Process VRCFaceTracking -ErrorAction SilentlyContinue)
@@ -186,17 +195,14 @@ if ($needVrcftRestart) {
       [IO.File]::WriteAllText($p, $raw, (New-Object Text.UTF8Encoding($true)))
     }
   }
+  if ($mjFix) { Act "rewrite module.json" { Write-ModuleJson $installDir $ours.Id } }
   if ($dllChanged) {
     if (-not $installDir) {
       $id = [guid]::NewGuid().ToString()
       $installDir = Join-Path (Join-Path $data "CustomLibs") $id
       Act "install the module into $installDir" {
         New-Item -ItemType Directory -Force $installDir | Out-Null
-        [ordered]@{ InstallationState = 0; ModuleId = $id; LastUpdated = (Get-Date).ToString("s"); Version = "0.2.0"; IsLocal = $true
-          Downloads = 0; Ratings = 0; Rating = 0; AuthorName = "vrcft-steam-frame"; ModuleName = "Steam Frame Eye Tracking"
-          ModuleDescription = "Per-eye gaze and eyelids for Steam Frame (frameeyeosc), Steam Link OSC fallback"
-          UsageInstructions = "See the vrcft-steam-frame README"; DllFileName = $script:ModuleDll } |
-          ConvertTo-Json | Set-Content (Join-Path $installDir "module.json") -Encoding UTF8
+        Write-ModuleJson $installDir $id
         Copy-Item $dll $installDir -Force
         $saved = Join-Path $parked "steamframe-config.backup.json"
         if (Test-Path $saved) { Copy-Item $saved (Join-Path $installDir "steamframe-config.json"); Write-Step info "restored your earlier calibration" }

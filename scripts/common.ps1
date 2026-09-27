@@ -4,6 +4,8 @@
 $script:SteamAppId = "3329480"     # VRCFaceTracking on Steam
 $script:ModuleDll = "SteamFrameVRCFTModule.dll"
 $script:StockDll = "SteamLinkVRCFTModule.dll"
+$script:ModuleVersion = "0.2.1"
+$script:RepoUrl = "https://github.com/hakumaguro/vrcft-steam-frame"
 
 function Get-VrcftDataDir {
   param([string]$Override)
@@ -164,6 +166,22 @@ function Select-HeadsetTarget {
   if ($old -and ($LocalIps -contains $old)) { return @{ Target = $old; Reason = "keeping the existing target $old (still this PC's address)" } }
   if ($old) { return @{ Target = $Client; Reason = "the old target $old is no longer this PC's address; switching to $Client" } }
   return @{ Target = $Client; Reason = "the headset reaches this PC at $Client" }
+}
+
+# module.json for VRCFT. Every field the registry page shows must be present: without DownloadUrl/ModulePageUrl,
+# opening "Module Registry" crashes VRCFaceTracking (WinUI E_INVALIDARG, reproduced 2026-09-27). Written without a BOM.
+function Write-ModuleJson {
+  param([string]$Dir, [string]$Id)
+  $j = [ordered]@{
+    InstallationState = 0; ModuleId = $Id; LastUpdated = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+    Version = $script:ModuleVersion; IsLocal = $true; Downloads = 0; Ratings = 0; Rating = 0
+    AuthorName = "vrcft-steam-frame"; ModuleName = "Steam Frame Eye Tracking"
+    ModuleDescription = "Per-eye gaze and eyelids for Steam Frame (frameeyeosc), Steam Link OSC fallback"
+    UsageInstructions = "See the README: $script:RepoUrl"
+    DownloadUrl = "$script:RepoUrl/releases/latest"; ModulePageUrl = $script:RepoUrl
+    DllFileName = $script:ModuleDll; FileHash = $null
+  }
+  [IO.File]::WriteAllText((Join-Path $Dir "module.json"), ($j | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
 }
 
 function Write-Step { param([string]$State, [string]$Text)
