@@ -33,6 +33,9 @@ a failed config read is retried every second (timestamp recorded only after succ
 exclusive lock); `tune.py analyze` maps with the configured `lid.deadband` and `wink.assistClosed` (`STEAMFRAME_CONFIG=<file>` overrides
 the config path for tests). `settings_or_exit` validates those values (deadband 0..0.45, assistClosed 0..1, numbers only) with the
 module's limits before any calculation, and `record`/`calibrate` run it before recording; broken files give a spoken error, nothing changes.
+Calibration voice: `tune.py` used to start PowerShell + System.Speech for every prompt (~1.5 s idle, worse under VR load), so prompts
+lagged their beeps and piled up; the user could not hear them (2026-09-28). `Speaker` keeps one engine for the whole recording (started in
+the lead-in, 7-10 ms per prompt, a new prompt cancels a late one). Not caused by 0.2.2: the prompt code was unchanged since v0.2.1.
 Not done yet: offline replay tests for the eyelid pipeline (the replays in this history were ad-hoc scripts).
 
 ## Working with the user

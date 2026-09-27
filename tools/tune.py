@@ -72,6 +72,48 @@ def speak(text):
     return subprocess.Popen(["powershell", "-NoProfile", "-Command", ps], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+class Speaker:
+    """One speech process for a whole recording. Starting PowerShell + System.Speech per prompt takes ~1.5 s on an idle PC
+    (more while VRChat/SteamVR run), so prompts lagged their beeps and piled up. This starts the engine once (during the
+    lead-in) and speaks each line immediately; a new line cuts off one that is still talking."""
+
+    SCRIPT = (
+        "Add-Type -AssemblyName System.Speech; "
+        "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Rate = 1; $s.Volume = [int]$env:SF_TTS_VOLUME; "
+        "$s.SetOutputToDefaultAudioDevice(); [Console]::Out.WriteLine('ready'); [Console]::Out.Flush(); "
+        "while ($null -ne ($line = [Console]::In.ReadLine())) { "
+        "  $s.SpeakAsyncCancelAll(); [void]$s.SpeakAsync($line); [Console]::Out.WriteLine('said'); [Console]::Out.Flush() } "
+        "while ($s.State -eq 'Speaking') { Start-Sleep -Milliseconds 50 }"
+    )
+
+    def __init__(self, volume=100):
+        env = dict(os.environ, SF_TTS_VOLUME=str(volume))
+        self.p = subprocess.Popen(["powershell", "-NoProfile", "-NonInteractive", "-Command", self.SCRIPT],
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                  text=True, encoding="utf-8", bufsize=1, env=env)
+        self.ok = self.p.stdout.readline().strip() == "ready"
+
+    def say(self, text):
+        if not self.ok:                      # engine failed to start: fall back to the old one-shot way
+            speak(text)
+            return
+        try:
+            self.p.stdin.write(text.replace("\n", " ") + "\n")
+            self.p.stdin.flush()
+            self.p.stdout.readline()         # 'said': the line was handed to the engine
+        except OSError:
+            self.ok = False
+            speak(text)
+
+    def close(self, wait=True):
+        try:
+            self.p.stdin.close()
+            if wait:
+                self.p.wait(timeout=30)
+        except Exception:
+            self.p.kill()
+
+
 def beep(freq=880, ms=120):
     try:
         import winsound
@@ -240,18 +282,23 @@ def _record(a):
     os.makedirs(out, exist_ok=True)
     total = sum(s for _, s, _ in PROTOCOL)
     print(f"Session {out}\n{len(PROTOCOL)} steps, about {total} s. Put the headset on now; you have {a.lead} s.")
-    speak("Calibration starts soon. Put the headset on and keep your face relaxed.")
-    time.sleep(a.lead)
+    t_lead = time.time()
+    voice = Speaker()                        # started once, during the lead-in
+    voice.say("Calibration starts soon. Put the headset on and keep your face relaxed.")
+    time.sleep(max(0.0, a.lead - (time.time() - t_lead)))
     labels = []
     t_start = time.time()
-    for label, secs, text in PROTOCOL:
-        t0 = time.time()
-        print(f"  {label:<11} {secs:>2}s  {text}")
-        beep()
-        speak(text)
-        time.sleep(secs)
-        labels.append((stamp(t0), stamp(time.time()), label))
-    beep(660, 300)
+    try:
+        for label, secs, text in PROTOCOL:
+            t0 = time.time()
+            print(f"  {label:<11} {secs:>2}s  {text}")
+            beep()
+            voice.say(text)
+            time.sleep(max(0.0, secs - (time.time() - t0)))
+            labels.append((stamp(t0), stamp(time.time()), label))
+        beep(660, 300)
+    finally:
+        voice.close()
     time.sleep(0.5)
     with open(os.path.join(out, "labels.csv"), "w", newline="") as f:
         w = csv.writer(f)
