@@ -15,6 +15,7 @@ import argparse
 import csv
 import glob
 import json
+import math
 import os
 import shutil
 import statistics as st
@@ -171,6 +172,39 @@ def pct(v, p):
 STATUS = os.path.join(os.environ.get("TEMP", "."), "steamframe-status.json")
 
 
+def settings_or_exit():
+    """The installed config values analyze depends on, checked with the module's own limits. Exits with a spoken
+    message before any calculation (or recording) if the file is unreadable or a value is out of range."""
+    cp = config_path()
+    if not cp or not os.path.exists(cp):
+        return {}, 0.06, 0.06
+    problem = None
+    try:
+        cfg = _load_cfg(cp)
+        if not isinstance(cfg, dict):
+            raise ValueError("the file does not contain a JSON object")
+    except (OSError, ValueError) as e:
+        cfg, problem = {}, f"it cannot be read ({e})"
+    db, a_closed = 0.06, 0.06
+    if not problem:
+        lid, wink = cfg.get("lid", {}), cfg.get("wink", {})
+        if not isinstance(lid, dict) or not isinstance(wink, dict):
+            problem = "the lid or wink section is missing or not an object"
+        else:
+            def num(v, lo, hi):
+                return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and lo <= v <= hi
+            db, a_closed = lid.get("deadband", 0.06), wink.get("assistClosed", 0.06)
+            if not num(db, 0.0, 0.45):
+                problem = f"lid.deadband is {db!r}; it must be a number from 0 to 0.45"
+            elif not num(a_closed, 0.0, 1.0):
+                problem = f"wink.assistClosed is {a_closed!r}; it must be a number from 0 to 1"
+    if problem:
+        speak_wait("Your settings file has an error, so calibration cannot run. Nothing was changed. See the screen.")
+        sys.exit(f"steamframe-config.json {problem}.\n  {cp}\n"
+                 "Fix the value, restore steamframe-config.json.bak, or delete the file so the module writes the defaults. Nothing was changed.")
+    return cfg, float(db), float(a_closed)
+
+
 def ready_or_exit():
     """Before asking the user to sit through a recording, check VRCFT and fresh headset data; say what is missing."""
     msg = None
@@ -188,6 +222,7 @@ def ready_or_exit():
     if msg:
         speak_wait(msg[0])
         sys.exit(msg[1])
+    settings_or_exit()   # a broken settings file would only fail after the 90 s recording
 
 
 def cmd_record(a):
@@ -259,6 +294,7 @@ def cmd_analyze(a):
         if not subs:
             sys.exit("No sessions yet. Run: python tools/tune.py record")
         d = subs[-1]
+    cfg_now, db, a_closed = settings_or_exit()
     rows, g = load_session(d)
     need = ["open", "closed"]
     for n in need:
@@ -322,11 +358,7 @@ def cmd_analyze(a):
 
     # Wink assist: does the other eye squint while one eye is closed? Compare it (in the module's mapped units) with that eye's
     # level when both eyes are closed; if the two separate, the assist can tell a wink from a real closure.
-    # use the settings the module will run with (applying keeps the existing deadband and assistClosed)
-    cp_now = config_path()
-    cfg_now = _load_cfg(cp_now) if cp_now else {}
-    db = float((cfg_now.get("lid") or {}).get("deadband", 0.06))
-    a_closed = float((cfg_now.get("wink") or {}).get("assistClosed", 0.06))
+    # db / a_closed: the settings the module will run with (validated in settings_or_exit; applying keeps them)
     mapped = lambda n: max(0.0, min(1.0, (n - db) / (1 - 2 * db)))
     mL = lambda x: mapped(nL(x[1]))
     mR = lambda x: mapped(nR(x[2]))

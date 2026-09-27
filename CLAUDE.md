@@ -31,7 +31,8 @@ Follow-up review of f5ec145, also fixed in 0.2.2: `Validate` checks relationship
 adaptive clamp can no longer get a lower bound above 1 (fuzzed: 7269 valid configs x 200 samples through `LidCal.Map`, no throw, output 0..1);
 a failed config read is retried every second (timestamp recorded only after success, each distinct error logged once; tested with a 3 s
 exclusive lock); `tune.py analyze` maps with the configured `lid.deadband` and `wink.assistClosed` (`STEAMFRAME_CONFIG=<file>` overrides
-the config path for tests).
+the config path for tests). `settings_or_exit` validates those values (deadband 0..0.45, assistClosed 0..1, numbers only) with the
+module's limits before any calculation, and `record`/`calibrate` run it before recording; broken files give a spoken error, nothing changes.
 Not done yet: offline replay tests for the eyelid pipeline (the replays in this history were ad-hoc scripts).
 
 ## Working with the user
