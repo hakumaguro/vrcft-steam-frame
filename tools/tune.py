@@ -80,6 +80,8 @@ def beep(freq=880, ms=120):
 
 
 def config_path():
+    if os.environ.get("STEAMFRAME_CONFIG"):          # testing / non-standard installs
+        return os.environ["STEAMFRAME_CONFIG"]
     hits = glob.glob(os.path.join(os.environ.get("APPDATA", ""), "VRCFaceTracking", "CustomLibs", "*", "steamframe-config.json"))
     if hits:
         return max(hits, key=os.path.getmtime)
@@ -320,14 +322,19 @@ def cmd_analyze(a):
 
     # Wink assist: does the other eye squint while one eye is closed? Compare it (in the module's mapped units) with that eye's
     # level when both eyes are closed; if the two separate, the assist can tell a wink from a real closure.
-    mapped = lambda n: max(0.0, min(1.0, (n - 0.06) / 0.88))     # module: deadband 0.06
+    # use the settings the module will run with (applying keeps the existing deadband and assistClosed)
+    cp_now = config_path()
+    cfg_now = _load_cfg(cp_now) if cp_now else {}
+    db = float((cfg_now.get("lid") or {}).get("deadband", 0.06))
+    a_closed = float((cfg_now.get("wink") or {}).get("assistClosed", 0.06))
+    mapped = lambda n: max(0.0, min(1.0, (n - db) / (1 - 2 * db)))
     mL = lambda x: mapped(nL(x[1]))
     mR = lambda x: mapped(nR(x[2]))
     # per eye, its level while both eyes are closed (p75: the both-closed step also contains ceiling-pinned glitch frames)
     closed_lvl = {"L": pct([mL(x) for x in g["closed"]], 0.75), "R": pct([mR(x) for x in g["closed"]], 0.75)}
     squint, mins = [], []
     for name, winking, other, oe in (("wink_left", mL, mR, "R"), ("wink_right", mR, mL, "L")):
-        seg = [x for x in g.get(name, []) if winking(x) < 0.06]
+        seg = [x for x in g.get(name, []) if winking(x) < a_closed]
         if len(seg) < 10:
             continue
         med = st.median(other(x) for x in seg)

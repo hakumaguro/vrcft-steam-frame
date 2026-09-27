@@ -74,7 +74,7 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
                 if (Sm < Lo) Lo = Sm; else Lo += (Sm - Lo) * c.Tau;
                 if (Sm > Hi) Hi = Sm; else Hi += (Sm - Hi) * c.Tau;
                 Lo = Math.Clamp(Lo, 0f, c.MaxFloor);
-                Hi = Math.Clamp(Hi, MathF.Max(c.MinCeil, Lo + c.MinRange), 1f);
+                Hi = Math.Clamp(Hi, MathF.Min(1f, MathF.Max(c.MinCeil, Lo + c.MinRange)), 1f);   // lower bound never above 1
             }
             float n = (raw - Lo) / (Hi - Lo);
             return Math.Clamp((n - c.Deadband) / (1f - 2f * c.Deadband), 0f, 1f);
@@ -175,14 +175,14 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
         {
             var stamp = File.Exists(_cfgPath) ? File.GetLastWriteTimeUtc(_cfgPath) : DateTime.MinValue;
             if (!force && stamp == _cfgStamp) return;
-            _cfgStamp = stamp;
             var next = ModuleConfig.TryLoad(_cfgPath, out var error);
             if (next == null)
             {
-                // keep the configuration that was working; say why the new one was not used
-                _configError = $"steamframe-config.json was not applied ({error}); still using the previous settings";
-                FileLog(_configError);
-                Logger.LogWarning("{0}", _configError);
+                // Keep the configuration that was working and say why the new one was not used. The timestamp is not
+                // recorded, so the file is read again next second (a temporary lock clears; a fixed file loads).
+                var msg = $"steamframe-config.json was not applied ({error}); still using the previous settings";
+                if (msg != _configError) { FileLog(msg); Logger.LogWarning("{0}", msg); }
+                _configError = msg;
                 return;
             }
             _cfg = next;

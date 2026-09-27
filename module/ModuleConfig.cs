@@ -119,6 +119,9 @@ public sealed class ModuleConfig
         if (Bad(Lid.Deadband, 0f, 0.45f)) return "lid.deadband must be 0..0.45";
         if (Bad(Lid.Smoothing, 0f, 1f) || Bad(Lid.Tau, 0f, 1f)) return "lid.smoothing and lid.tau must be 0..1";
         if (Bad(Lid.MaxFloor, 0f, 1f) || Bad(Lid.MinCeil, 0f, 1f) || Bad(Lid.MinRange, 0.01f, 1f)) return "lid.maxFloor/minCeil/minRange out of range";
+        // the adaptive ceiling is at least max(minCeil, floor + minRange) and at most 1, with floor up to maxFloor
+        if (Lid.MaxFloor + Lid.MinRange > 1f) return "lid.maxFloor + lid.minRange must not exceed 1";
+        if (Lid.MinCeil <= 0f || Lid.MinCeil > 1f) return "lid.minCeil must be above 0 and at most 1";
         foreach (var (c, o, eye) in new[] { (Lid.LeftClosed, Lid.LeftOpen, "left"), (Lid.RightClosed, Lid.RightOpen, "right") })
         {
             if (c is float fc && Bad(fc, 0f, 1f)) return $"lid.{eye}Closed must be 0..1";

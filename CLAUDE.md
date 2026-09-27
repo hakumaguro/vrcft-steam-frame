@@ -27,6 +27,11 @@ Eye tracking for the Steam Frame in VRChat via VRCFaceTracking (VRCFT). Read `RE
 - `headset-setup.sh` pins frameeyeosc to a reviewed commit (`REV`, override `FRAMEEYEOSC_REV`) and moves existing checkouts to it;
   `FRAMEEYEOSC_NO_BUILD=1` tests only the checkout logic (works locally with `HOME=<tmp>`).
 - `Select-HeadsetTarget` only counts addresses of connected adapters (Windows lists a disconnected adapter's IP).
+Follow-up review of f5ec145, also fixed in 0.2.2: `Validate` checks relationships (`maxFloor + minRange <= 1`, `minCeil > 0`) and the
+adaptive clamp can no longer get a lower bound above 1 (fuzzed: 7269 valid configs x 200 samples through `LidCal.Map`, no throw, output 0..1);
+a failed config read is retried every second (timestamp recorded only after success, each distinct error logged once; tested with a 3 s
+exclusive lock); `tune.py analyze` maps with the configured `lid.deadband` and `wink.assistClosed` (`STEAMFRAME_CONFIG=<file>` overrides
+the config path for tests).
 Not done yet: offline replay tests for the eyelid pipeline (the replays in this history were ad-hoc scripts).
 
 ## Working with the user
