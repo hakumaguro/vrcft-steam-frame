@@ -10,11 +10,12 @@ per-eye gaze, real blinks and winks. Mouth tracking is not possible: the Frame h
 You need: **VRCFaceTracking** (from Steam), **SteamVR + Steam Link** with the Frame, and an avatar with VRCFT eye tracking
 (`FT/v2` parameters). For calibration, also **Python 3** ([python.org](https://www.python.org/downloads/)).
 
-1. Download this repository (green **Code** button, then **Download ZIP**) and unzip it anywhere.
+1. Download **`vrcft-steam-frame-<version>.zip`** from the [latest release](https://github.com/hakumaguro/vrcft-steam-frame/releases/latest)
+   and unzip it anywhere. (It contains the ready-built module, so nothing else needs installing. Downloading the source
+   instead also works: setup then builds the module and offers to install the .NET SDK for your user.)
 2. **Close SteamVR**, then double-click **`Start Here.cmd`** and choose **1**.
    It sets everything up on the PC, restarts VRCFaceTracking and **speaks** the result. Run it again any time: it only
-   changes what is not already right. (Without a release zip it builds the module and offers to install the .NET SDK for
-   your user.)
+   changes what is not already right.
 3. For **eyelids and winks**, choose **2** and enter the headset login (for example `steamos@192.168.1.50`; SSH must be
    enabled on the headset). You type the headset password once; after that it installs everything and starts it
    automatically with every boot.
