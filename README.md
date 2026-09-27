@@ -18,12 +18,61 @@ You need: **VRCFaceTracking** (from Steam), **SteamVR + Steam Link** with the Fr
    changes what is not already right.
 3. For **eyelids and winks**, choose **2** and enter the headset login (for example `steamos@192.168.1.50`; SSH must be
    enabled on the headset). You type the headset password once; after that it installs everything and starts it
-   automatically with every boot.
+   automatically with every boot. Not comfortable with SSH? Read [Why SSH?](#why-ssh) first: it is only needed once,
+   you can turn it off afterwards, and there is a way without it.
 4. Put the headset on and choose **4** to calibrate. A voice guides you (about 90 seconds) and tells you the result.
 
 Something not working? Choose **3**: it checks every part and says what is wrong and how to fix it.
 
 **Always start VRCFaceTracking from Steam.** Starting its `.exe` directly skips the modules (VRCFT quirk).
+
+## Why SSH?
+
+**Short version:** the eyelid data never leaves the headset on its own, so a small program has to run *on the headset* to
+send it to your PC. SSH is only how the PC installs that program for you. The eye data itself does not go through SSH.
+
+**The longer version:**
+
+- The Frame tracks your eyes with its own cameras, and the result (gaze and how open each eyelid is) sits in the headset's
+  memory. Steam Link forwards only part of it to the PC: gaze, with both eyes identical, and an eyelid value that is
+  always 0. That is why blinks and winks can't work from the PC side alone.
+- [frameeyeosc](https://github.com/konsti219/frameeyeosc) is a small program that reads that data on the headset and sends
+  it to your PC over the network (OSC, UDP port 9020).
+- To install a program on the headset, something has to type commands on it. Menu **2** does that from the PC over SSH:
+  it copies three small scripts, builds frameeyeosc, and sets it to start with the headset.
+
+**What SSH is used for, and what not:**
+
+| | SSH needed? |
+|---|---|
+| Installing or updating the headset part (menu 2) | yes, once |
+| Sending eye data while you play | **no**: frameeyeosc sends it directly, SSH can be off |
+| Everything on the PC (menus 1, 3, 4, 5) | no |
+
+**What runs on the headset:** frameeyeosc, as your normal user (not root). It reads only the eye-tracking data and sends it
+only to your PC's address. It opens no ports on the headset. It is built from its source code (about 300 lines) in
+`~/frameeyeosc`, with Rust installed in `~/.cargo`. Nothing outside your home folder is changed.
+
+**Keeping it tight:**
+
+1. Use SSH once for menu 2, then **turn SSH off** again (the same way you turned it on, or `sudo systemctl disable --now sshd`
+   on the headset). Eye tracking keeps working. Turn it back on only when you want to update.
+2. Menu 2 logs in with a key it creates (`%USERPROFILE%\.ssh\id_ed25519_frame`); your password is typed once and never stored.
+   To revoke the PC's access, delete that key's line from `~/.ssh/authorized_keys` on the headset.
+
+**Without SSH at all**, you have two options:
+
+- **Skip the headset part.** Menu 1 alone gives you gaze through Steam Link, but blinks are guessed and winks don't work.
+- **Install it from the headset's own desktop.** Open a terminal in the Frame's desktop mode and run the same script
+  menu 2 would run, with your PC's address (shown by `ipconfig` on the PC; use the one on the same network as the headset):
+  ```
+  git clone https://github.com/hakumaguro/vrcft-steam-frame ~/vrcft-steam-frame
+  bash ~/vrcft-steam-frame/scripts/headset-install.sh <PC-IP>
+  ```
+
+**To remove the headset part completely:**
+`systemctl --user disable --now frameeyeosc; loginctl disable-linger $USER; rm -rf ~/frameeyeosc ~/steamframe ~/.config/systemd/user/frameeyeosc.service`,
+and `~/.cargo/bin/rustup self uninstall` for Rust.
 
 ## Troubleshooting
 
