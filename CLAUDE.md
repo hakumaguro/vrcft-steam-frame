@@ -5,7 +5,7 @@ Eye tracking for the Steam Frame in VRChat via VRCFaceTracking (VRCFT). Read `RE
 
 ## Current state (2026-09-27)
 
-- Module **0.2.2** committed locally (review fixes below), not yet pushed or released. Latest release **v0.2.1** (2026-09-27; fixes the Module Registry crash via a complete `module.json`), with a prebuilt-DLL zip. Working end to end on the author's setup: per-eye gaze, blinks, both
+- Latest release **v0.2.2** (2026-09-28: review fixes, calibration voice fix, pinned frameeyeosc), prebuilt-DLL zip. Working end to end on the author's setup: per-eye gaze, blinks, both
   winks, wink assist; frameeyeosc auto-starts on the headset and survived a real reboot; `doctor.ps1` reports "All good".
 - `setup.ps1 -Headset` (menu 2) was run for real on 2026-09-27 against an already-set-up Frame: SSH login, target kept, build no-op,
   unit refreshed, service active, doctor "All good"; a second run changed nothing. Still never exercised: the first-time path on a fresh
@@ -13,7 +13,7 @@ Eye tracking for the Steam Frame in VRChat via VRCFaceTracking (VRCFT). Read `RE
 - Open ideas: verify the gaze scale (frameeyeosc +-1 == +-45 deg -> radians) against a reference; a first-run check in `Start Here.cmd`
   that VRCFT is running (users forget to start it from Steam each session; the doctor catches it).
 
-## Review fixes in 0.2.2 (2026-09-27, from an external review; all verified against the code first)
+## Review fixes in 0.2.2 (2026-09-27/28, from an external review; all verified against the code first; released)
 
 - `tune.py analyze` rejects a calibration whose per-eye open-closed range is < 0.15 or reversed (was a ZeroDivisionError or bad
   values), keeps the previous config, and says so. It now also recommends `wink.assist` + `assistMin` (other eye's both-closed p75 + 0.08).
