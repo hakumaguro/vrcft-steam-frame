@@ -41,6 +41,8 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
     private string _source = "";
     private long _lastStatus;
     private string _startError = "";
+    private string _configError = "";
+    private bool _neutralSent;
 
     private OscReceiver? _osc, _frame;
     private long _lastTrace, _lastCfgCheck, _lastLidTick;
@@ -173,7 +175,18 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
         {
             var stamp = File.Exists(_cfgPath) ? File.GetLastWriteTimeUtc(_cfgPath) : DateTime.MinValue;
             if (!force && stamp == _cfgStamp) return;
-            _cfg = ModuleConfig.Load(_cfgPath);
+            _cfgStamp = stamp;
+            var next = ModuleConfig.TryLoad(_cfgPath, out var error);
+            if (next == null)
+            {
+                // keep the configuration that was working; say why the new one was not used
+                _configError = $"steamframe-config.json was not applied ({error}); still using the previous settings";
+                FileLog(_configError);
+                Logger.LogWarning("{0}", _configError);
+                return;
+            }
+            _cfg = next;
+            _configError = "";
             _cfgStamp = File.Exists(_cfgPath) ? File.GetLastWriteTimeUtc(_cfgPath) : DateTime.MinValue;
             FileLog("config loaded");
         }
@@ -196,7 +209,8 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
         }
         bool steamLinkFresh = _osc != null && _osc.LastPacketTicks != 0 && t0 - _osc.LastPacketTicks < 1000;
         SetSource(steamLinkFresh ? "steamlink" : "none");
-        if (_osc != null) UpdateFromSteamLink();
+        if (steamLinkFresh) { _neutralSent = false; UpdateFromSteamLink(); }
+        else SetNeutralEyes();
     }
 
     // ---- source 1: frameeyeosc (per-eye) -------------------------------------------------------------
@@ -253,7 +267,8 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
         if (c.Trace && nowMs - _lastTrace >= 30)   // off by default; tools/tune.py switches it on while it needs samples
         {
             _lastTrace = nowMs;
-            AppendCapped(TracePath, $"{DateTime.Now:HH:mm:ss.fff},FRAME,{f.lx:F3},{f.ly:F3},{f.rx:F3},{f.ry:F3},{f.ol:F3},{f.or:F3},{mol:F3},{mor:F3},{_calL.Lo:F2},{_calL.Hi:F2},{_calR.Lo:F2},{_calR.Hi:F2}{Environment.NewLine}", MaxTraceBytes);
+            // invariant culture: with a decimal comma the CSV would gain extra columns and tune.py would misread it
+            AppendCapped(TracePath, FormattableString.Invariant($"{DateTime.Now:HH:mm:ss.fff},FRAME,{f.lx:F3},{f.ly:F3},{f.rx:F3},{f.ry:F3},{f.ol:F3},{f.or:F3},{mol:F3},{mor:F3},{_calL.Lo:F2},{_calL.Hi:F2},{_calR.Lo:F2},{_calR.Hi:F2}") + Environment.NewLine, MaxTraceBytes);
         }
     }
 
@@ -299,12 +314,27 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
         eye._maxDilation = 10; eye._minDilation = 0;
     }
 
+    /// <summary>No fresh data from either source: look straight ahead with open eyes instead of freezing on the last reading
+    /// (which could be mid-blink). Sent once per no-data period.</summary>
+    private void SetNeutralEyes()
+    {
+        if (_neutralSent) return;
+        _neutralSent = true;
+        _closed = 0f; _gx = 0f; _gy = 0f;
+        var e = UnifiedTracking.Data.Eye;
+        e.Left.Gaze.x = 0f; e.Left.Gaze.y = 0f; e.Right.Gaze.x = 0f; e.Right.Gaze.y = 0f;
+        e.Left.Openness = 1f; e.Right.Openness = 1f;
+        e.Left.PupilDiameter_MM = 5f; e.Right.PupilDiameter_MM = 5f;
+        e._maxDilation = 10; e._minDilation = 0;
+    }
+
     // ---- status for tools/tune.py doctor ---------------------------------------------------------------
 
     private void SetSource(string s)
     {
         if (s == _source) return;
         _source = s;
+        if (s != "none") _neutralSent = false;
         FileLog(s switch
         {
             "frameeyeosc" => "eye data: frameeyeosc (per-eye gaze and eyelids)",
@@ -331,6 +361,7 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
             ["trace"] = _cfg.Trace,
             ["config"] = _cfgPath,
             ["startError"] = _startError,
+            ["configError"] = _configError,
         };
         try { File.WriteAllText(StatusPath, System.Text.Json.JsonSerializer.Serialize(status)); } catch { }
     }

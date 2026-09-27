@@ -42,6 +42,7 @@ if ($vrcftRunning -and $moduleProc) {
     else { Fail "the Steam Frame module is not active (status is $([int]($st.AgeMs/1000)) s old)" "The Steam Frame module is not active." "check the Modules page in VRCFaceTracking; if another module claims eye tracking, disable it" }
   } else {
     if ($st.startError) { Warn "module reports: $($st.startError)" "The module reported a start problem. See the screen." "" }
+    if ($st.configError) { Warn "$($st.configError)" "Your settings file has an error, so the previous settings are still used." "fix the file (menu 6 opens its folder) or restore steamframe-config.json.bak" }
     switch ($st.source) {
       "frameeyeosc" { Write-Step ok "eye data from the headset (per-eye gaze and eyelids), $($st.frameAgeMs) ms old" }
       "steamlink"   { Warn "only the Steam Link fallback is sending: gaze works, eyelids are guessed" "Only the Steam Link fallback is working. Eyelids are guessed. The headset part is not sending." "on the headset: systemctl --user status frameeyeosc  (or run setup with -Headset)" }

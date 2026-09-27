@@ -82,6 +82,8 @@ and `~/.cargo/bin/rustup self uninstall` for Rust.
 | Winking closes **both** avatar eyes | The avatar links its eyelids: open the avatar menu and turn off **Eye Sync** / "Link eyes". |
 | Status says "no eye data" | Wear the headset and connect Steam Link. For eyelids, the headset part must run: menu **2** sets it up again. |
 | Status says "only the Steam Link fallback" | Gaze works, eyelids are guessed. The headset part is not sending: menu **2**, or on the headset `systemctl --user status frameeyeosc`. |
+| Eyelids stopped after a headset reboot or network change ("only the Steam Link fallback") | The headset may now reach the PC over a different network. Run menu **2** again: it picks the address that works and keeps the rest. |
+| Status says "your settings file has an error" | The module ignored the broken `steamframe-config.json` and kept the previous settings. Fix it, restore `steamframe-config.json.bak`, or calibrate again (menu 4). |
 | Status says "started without its modules" | Close VRCFaceTracking and start it from Steam. |
 | Status mentions the old SteamLink module / port 9015 | Menu **1** moves the stock SteamLink module aside (menu **7** puts it back). |
 | Eyes look wrong after a Frame update | Menu **2** again; if the headset reports a new eye-data version, the headset part needs an update upstream. |

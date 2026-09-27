@@ -5,13 +5,29 @@ Eye tracking for the Steam Frame in VRChat via VRCFaceTracking (VRCFT). Read `RE
 
 ## Current state (2026-09-27)
 
-- Latest release **v0.2.1** (2026-09-27; fixes the Module Registry crash via a complete `module.json`), with a prebuilt-DLL zip. Working end to end on the author's setup: per-eye gaze, blinks, both
+- Module **0.2.2** committed locally (review fixes below), not yet pushed or released. Latest release **v0.2.1** (2026-09-27; fixes the Module Registry crash via a complete `module.json`), with a prebuilt-DLL zip. Working end to end on the author's setup: per-eye gaze, blinks, both
   winks, wink assist; frameeyeosc auto-starts on the headset and survived a real reboot; `doctor.ps1` reports "All good".
 - `setup.ps1 -Headset` (menu 2) was run for real on 2026-09-27 against an already-set-up Frame: SSH login, target kept, build no-op,
   unit refreshed, service active, doctor "All good"; a second run changed nothing. Still never exercised: the first-time path on a fresh
   headset (key authorisation by password, Rust install + first build). Treat that as a test when someone new tries it.
 - Open ideas: verify the gaze scale (frameeyeosc +-1 == +-45 deg -> radians) against a reference; a first-run check in `Start Here.cmd`
   that VRCFT is running (users forget to start it from Steam each session; the doctor catches it).
+
+## Review fixes in 0.2.2 (2026-09-27, from an external review; all verified against the code first)
+
+- `tune.py analyze` rejects a calibration whose per-eye open-closed range is < 0.15 or reversed (was a ZeroDivisionError or bad
+  values), keeps the previous config, and says so. It now also recommends `wink.assist` + `assistMin` (other eye's both-closed p75 + 0.08).
+- `tune.py record` checks first (status file) that VRCFT runs and frameeyeosc data is fresh, and speaks what is missing.
+- `ModuleConfig.TryLoad` + `Validate`: a broken or invalid `steamframe-config.json` is not applied; the module keeps the last good
+  config and reports `configError` (status file, log, doctor). Previously it silently fell back to defaults.
+- Without fresh data from either source the module sets neutral eyes (open, centred) once, instead of replaying stale Steam Link values.
+- Trace lines are written with `FormattableString.Invariant` (decimal-comma locales broke the CSV); `tune.py` skips malformed lines.
+- `setup.ps1` sandbox mode (`-VrcftData`) no longer touches the real SteamVR settings (unless `-SteamVrSettings <file>`) or the firewall.
+- Firewall: a *block* rule is handled separately (disable it + add allow, elevated); an allow rule alone does not beat a block rule.
+- `headset-setup.sh` pins frameeyeosc to a reviewed commit (`REV`, override `FRAMEEYEOSC_REV`) and moves existing checkouts to it;
+  `FRAMEEYEOSC_NO_BUILD=1` tests only the checkout logic (works locally with `HOME=<tmp>`).
+- `Select-HeadsetTarget` only counts addresses of connected adapters (Windows lists a disconnected adapter's IP).
+Not done yet: offline replay tests for the eyelid pipeline (the replays in this history were ad-hoc scripts).
 
 ## Working with the user
 
@@ -51,6 +67,9 @@ frameeyeosc sends `/avatar/parameters/FT/v2/{EyeLeftX,EyeLeftY,EyeRightX,EyeRigh
 - Tracker levels differ per eye: closed about L 0.14 / R 0.32, open about L 0.65 / R 0.75 (calibrations 2026-09-26).
 - Many blinks are reported lopsided: one lid ~0 while the other is pinned at raw ~1.0, up to ~350 ms. Real winks keep the open eye ~0.7-0.85.
 - Closing one eye tightens the other: during a right wink the left lid reads ~0.23-0.45 (vs ~0.14 when both are closed).
+- The Frame can reach the PC over two paths: its own Wi-Fi AP (PC "Wi-Fi 2", 10.35.78.x) or the home network. Which one Steam Link
+  uses can change between sessions; the headset's route to the AP subnet disappears when the PC's Wi-Fi 2 is disconnected, and packets to
+  the AP address then go to the home router and vanish. Target the PC's home-network address (the `$SSH_CLIENT` address) when both exist.
 - After a headset reboot the network comes up after the service starts; frameeyeosc exits with "Network is unreachable" and systemd
   `Restart=always` retries until it works (observed 2026-09-27). This is expected.
 - Avatars can link the eyelids themselves: Haku_FT_Comfy has a Bool `FT/EyeSync` toggle; with it on, a wink closes both eyes. Check the

@@ -27,13 +27,16 @@ param(
   [string]$KeyFile = "$env:USERPROFILE\.ssh\id_ed25519_frame",
   [switch]$NoSpeech,
   [switch]$NoRestart,           # do not stop/start VRCFaceTracking (for testing against -VrcftData)
-  [string]$VrcftData            # VRCFT data folder override (testing)
+  [string]$VrcftData,           # VRCFT data folder override (testing). Sandbox mode: SteamVR settings and firewall are not touched
+  [string]$SteamVrSettings      # steamvr.vrsettings to use instead of Steam's (testing; with -VrcftData only this file is edited)
 )
 $ErrorActionPreference = "Continue"   # native tools (ssh, dotnet) write to stderr; each change below stops on its own errors
 . "$PSScriptRoot\common.ps1"
 $script:NoSpeech = $NoSpeech
 $root = Split-Path -Parent $PSScriptRoot
 $data = Get-VrcftDataDir $VrcftData
+$sandbox = [bool]$VrcftData
+if ($sandbox) { Write-Host "SANDBOX: VRCFT data in $VrcftData; SteamVR settings only if -SteamVrSettings is given; firewall skipped.`n" -ForegroundColor Cyan }
 $parked = Join-Path $data "disabled-modules"
 $changed = @()                # human-readable list of changes made
 $needVrcftRestart = $false
@@ -137,11 +140,13 @@ if ($fixOutPort) { Write-Step warn "VRCFaceTracking sends to port $outPort (VRCh
 elseif ($outPort) { Write-Step ok "VRCFaceTracking sends to VRChat on port 9000" }
 
 # ---- 5. Steam Link driver settings ---------------------------------------------------------------------
-$vrPath = Get-SteamVrSettingsPath
+$vrPath = $SteamVrSettings
+if (-not $vrPath -and -not $sandbox) { $vrPath = Get-SteamVrSettingsPath }
 $vr = Get-VrlinkSettings $vrPath
-if ($vr.Ok) { Write-Step ok "Steam Link shares eye data on port 9015" }
+if ($sandbox -and -not $vrPath) { Write-Step skip "sandbox: the real SteamVR settings are not touched" }
+elseif ($vr.Ok) { Write-Step ok "Steam Link shares eye data on port 9015" }
 elseif (-not $vrPath -or -not (Test-Path $vrPath)) { Write-Step warn "steamvr.vrsettings not found (start SteamVR once, then run setup again)" }
-elseif (Test-SteamVrRunning) {
+elseif ((-not $SteamVrSettings) -and (Test-SteamVrRunning)) {
   Write-Step warn "Steam Link OSC settings need changing, but SteamVR is running (it would overwrite the change)."
   Write-Host "        Close SteamVR and run setup again, or in SteamVR: Settings > Advanced > Video > Steam Link: OSC Output Port 9015, share eye tracking on." -ForegroundColor DarkYellow
 } else {
@@ -214,21 +219,35 @@ if ($needVrcftRestart) {
 }
 
 # ---- 7. firewall --------------------------------------------------------------------------------------
-$fw = Test-ModuleFirewall $vrcft
-if ($fw.State -eq "ok") { Write-Step ok "firewall allows the module process" }
+if ($sandbox) { Write-Step skip "sandbox: firewall not checked" }
 else {
-  $why = "blocked"
-  if ($fw.State -eq "missing") { $why = "no allow rule on: $($fw.Missing) network" }
-  Write-Step warn "firewall: $why (headset data on UDP 9020 may not arrive)"
-  if ($DryRun) { Write-Step would "add an inbound UDP 9020 allow rule for the module process (admin prompt)" }
-  elseif (Ask "Add a firewall rule allowing UDP 9020 to the module? (Windows will ask for admin)") {
-    $cmd = "New-NetFirewallRule -DisplayName 'Steam Frame eye tracking (VRCFT module)' -Direction Inbound -Action Allow -Protocol UDP -LocalPort 9020 -Program '$($fw.Exe)' -Profile Any"
+$fw = Test-ModuleFirewall $vrcft
+$allowCmd = "New-NetFirewallRule -DisplayName 'Steam Frame eye tracking (VRCFT module)' -Direction Inbound -Action Allow -Protocol UDP -LocalPort 9020 -Program '$($fw.Exe)' -Profile Any"
+$fwCmd = $null; $fwQuestion = $null
+if ($fw.State -eq "ok") { Write-Step ok "firewall allows the module process" }
+elseif ($fw.State -eq "blocked") {
+  # A block rule wins over any allow rule, so adding an allow rule alone would not help.
+  Write-Step warn "firewall: a rule BLOCKS the module process (Windows adds one when its network prompt is answered with Cancel)"
+  $names = ($fw.BlockRules | ForEach-Object { "'" + $_ + "'" }) -join ","
+  $fwCmd = "Get-NetFirewallRule -Name $names | Disable-NetFirewallRule; $allowCmd"
+  $fwQuestion = "Disable the blocking rule(s) for the module and add an allow rule for UDP 9020? (Windows will ask for admin)"
+} else {
+  Write-Step warn "firewall: no allow rule on: $($fw.Missing) network (headset data on UDP 9020 may not arrive)"
+  $fwCmd = $allowCmd
+  $fwQuestion = "Add a firewall rule allowing UDP 9020 to the module? (Windows will ask for admin)"
+}
+if ($fwCmd) {
+  if ($DryRun) { Write-Step would ($fwQuestion -replace '\?.*$', '') }
+  elseif (Ask $fwQuestion) {
     # -EncodedCommand: Start-Process joins arguments without quoting, which breaks paths with spaces
-    $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd))
+    $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($fwCmd))
     Start-Process powershell -Verb RunAs -Wait -ArgumentList "-NoProfile", "-EncodedCommand", $enc
-    if ((Test-ModuleFirewall $vrcft).State -eq "ok") { Write-Step done "firewall rule added"; $changed += "firewall rule" }
-    else { Write-Step warn "firewall rule not confirmed (admin prompt declined?)" }
+    $after = (Test-ModuleFirewall $vrcft).State
+    if ($after -eq "ok") { Write-Step done "firewall now allows the module"; $changed += "firewall" }
+    elseif ($after -eq "blocked") { Write-Step warn "a blocking rule is still active (admin prompt declined, or the rule is set by policy); check Windows Defender Firewall > Inbound Rules" }
+    else { Write-Step warn "no allow rule yet (admin prompt declined?)" }
   }
+}
 }
 
 # ---- 8. headset (optional) ----------------------------------------------------------------------------

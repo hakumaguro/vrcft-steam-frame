@@ -4,7 +4,7 @@
 $script:SteamAppId = "3329480"     # VRCFaceTracking on Steam
 $script:ModuleDll = "SteamFrameVRCFTModule.dll"
 $script:StockDll = "SteamLinkVRCFTModule.dll"
-$script:ModuleVersion = "0.2.1"
+$script:ModuleVersion = "0.2.2"
 $script:RepoUrl = "https://github.com/hakumaguro/vrcft-steam-frame"
 
 function Get-VrcftDataDir {
@@ -102,7 +102,8 @@ function Test-ModuleFirewall {
   $exe = Join-Path $VrcftDir "VRCFaceTracking.ModuleProcess.exe"
   $rules = @(Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue | Where-Object { $_.Program -ieq $exe } |
              Get-NetFirewallRule -ErrorAction SilentlyContinue | Where-Object { "$($_.Enabled)" -eq "True" -and "$($_.Direction)" -eq "Inbound" })
-  if ($rules | Where-Object { "$($_.Action)" -eq "Block" }) { return @{ State = "blocked"; Exe = $exe } }
+  $block = @($rules | Where-Object { "$($_.Action)" -eq "Block" })
+  if ($block.Count -gt 0) { return @{ State = "blocked"; Exe = $exe; BlockRules = @($block | ForEach-Object { $_.Name }) } }
   $allow = @($rules | Where-Object { "$($_.Action)" -eq "Allow" })
   $cats = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue | ForEach-Object { ("$($_.NetworkCategory)" -replace 'DomainAuthenticated', 'Domain') } | Select-Object -Unique)
   $missing = @()
@@ -159,7 +160,11 @@ function Find-DotnetSdk10 {
 # addresses (DHCP can change it); otherwise uses the address the headset's SSH session came from.
 function Select-HeadsetTarget {
   param([string]$Override, [string]$Existing, [string]$Client, [string[]]$LocalIps)
-  if (-not $LocalIps) { $LocalIps = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object { $_.IPAddress }) }
+  if (-not $LocalIps) {
+    # connected adapters only: Windows keeps listing the address of a disconnected adapter (seen with the Frame's own Wi-Fi)
+    $up = @(Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq "Up" } | ForEach-Object { $_.ifIndex })
+    $LocalIps = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $up -contains $_.InterfaceIndex } | ForEach-Object { $_.IPAddress })
+  }
   if ($Override) { return @{ Target = $Override; Reason = "as requested" } }
   $old = ""
   if ($Existing) { $old = ($Existing -split ':')[0] }

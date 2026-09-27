@@ -47,7 +47,8 @@ PROTOCOL = [
     ("open", 2, "Done."),
 ]
 GUARD_START, GUARD_END = 1.3, 0.2
-SPOKEN = []   # short sentences for the spoken result of analyze   # seconds skipped at each segment edge (prompt + reaction time)
+SPOKEN = []   # short sentences for the spoken result of analyze
+MIN_LID_RANGE = 0.15   # raw open level must be at least this far above the closed level, per eye   # seconds skipped at each segment edge (prompt + reaction time)
 
 
 # ---- helpers ---------------------------------------------------------------------------------------
@@ -141,14 +142,20 @@ def speak_wait(text):
 
 def read_trace(path):
     """FRAME rows: time,FRAME,lx,ly,rx,ry,rawL,rawR,outL,outR,..."""
-    rows = []
+    rows, bad = [], 0
     with open(path, newline="", encoding="utf-8", errors="replace") as f:
         for p in csv.reader(f):
-            if len(p) >= 10 and p[1] == "FRAME":
-                try:
-                    rows.append((tod(p[0]), float(p[6]), float(p[7]), float(p[8]), float(p[9])))
-                except ValueError:
-                    pass
+            if len(p) < 2 or p[1] != "FRAME":
+                continue
+            if len(p) not in (12, 14):       # e.g. numbers written with a decimal comma split into extra columns
+                bad += 1
+                continue
+            try:
+                rows.append((tod(p[0]), float(p[6]), float(p[7]), float(p[8]), float(p[9])))
+            except ValueError:
+                bad += 1
+    if bad:
+        print(f"warning: skipped {bad} malformed trace lines in {path}")
     return rows
 
 
@@ -159,7 +166,30 @@ def pct(v, p):
 
 # ---- record ----------------------------------------------------------------------------------------
 
+STATUS = os.path.join(os.environ.get("TEMP", "."), "steamframe-status.json")
+
+
+def ready_or_exit():
+    """Before asking the user to sit through a recording, check VRCFT and fresh headset data; say what is missing."""
+    msg = None
+    try:
+        stt = json.load(open(STATUS, encoding="utf-8"))
+        age = time.time() * 1000 - stt.get("updated", 0)
+    except Exception:
+        stt, age = {}, 1e12
+    if age > 5000:
+        msg = ("VRCFaceTracking is not running, or the Steam Frame module is not active. Start VRCFaceTracking from Steam.",
+               "VRCFaceTracking / the module is not running (no fresh status). Start VRCFaceTracking from Steam, then run the status check.")
+    elif stt.get("source") != "frameeyeosc":
+        msg = ("No eyelid data from the headset. Put the headset on, and check the headset part with the status check.",
+               f"No frameeyeosc data (source: {stt.get('source')}). Wear the headset; run scripts\\doctor.ps1 if it persists.")
+    if msg:
+        speak_wait(msg[0])
+        sys.exit(msg[1])
+
+
 def cmd_record(a):
+    ready_or_exit()
     with Tracing():
         if not wait_for_samples():
             speak_wait("No eye data from the headset, so calibration cannot start. Run the status check.")
@@ -246,6 +276,13 @@ def cmd_analyze(a):
     print(f"  left : open p20 {cal['leftOpen']:.2f} (median {st.median(L(g['open'])):.2f})   closed p80 {cal['leftClosed']:.2f} (median {st.median(L(g['closed'])):.2f})")
     print(f"  right: open p20 {cal['rightOpen']:.2f} (median {st.median(R(g['open'])):.2f})   closed p80 {cal['rightClosed']:.2f} (median {st.median(R(g['closed'])):.2f})")
     warn = []
+    bad = [eye for eye in ("left", "right") if cal[eye + "Open"] - cal[eye + "Closed"] < MIN_LID_RANGE]
+    if bad:
+        which = " and ".join(bad)
+        print(f"\nCalibration rejected: the {which} eye's open and closed readings are too close together or reversed "
+              f"(need open at least {MIN_LID_RANGE} above closed). Nothing was changed; your previous settings are kept.")
+        speak_wait(f"Calibration failed for the {which} eye, so nothing was changed. Keep the eye fully open and fully closed when asked, and try again.")
+        sys.exit(2)
     for eye in ("left", "right"):
         if cal[eye + "Open"] - cal[eye + "Closed"] < 0.25:
             warn.append(f"{eye} eye: open and closed levels are only {cal[eye + 'Open'] - cal[eye + 'Closed']:.2f} apart, the tracker barely sees it close")
@@ -280,6 +317,30 @@ def cmd_analyze(a):
     rec["wink"]["threshold"] = round(max(0.08, min(0.35, base * 1.5)), 3)
     rec["wink"]["range"] = round(max(0.10, min(0.40, (st.median(sep) if sep else 0.4) * 0.7)), 3)
     print(f"  open-eye L/R mismatch p95 {base:.2f} -> wink.threshold {rec['wink']['threshold']}, wink.range {rec['wink']['range']}")
+
+    # Wink assist: does the other eye squint while one eye is closed? Compare it (in the module's mapped units) with that eye's
+    # level when both eyes are closed; if the two separate, the assist can tell a wink from a real closure.
+    mapped = lambda n: max(0.0, min(1.0, (n - 0.06) / 0.88))     # module: deadband 0.06
+    mL = lambda x: mapped(nL(x[1]))
+    mR = lambda x: mapped(nR(x[2]))
+    # per eye, its level while both eyes are closed (p75: the both-closed step also contains ceiling-pinned glitch frames)
+    closed_lvl = {"L": pct([mL(x) for x in g["closed"]], 0.75), "R": pct([mR(x) for x in g["closed"]], 0.75)}
+    squint, mins = [], []
+    for name, winking, other, oe in (("wink_left", mL, mR, "R"), ("wink_right", mR, mL, "L")):
+        seg = [x for x in g.get(name, []) if winking(x) < 0.06]
+        if len(seg) < 10:
+            continue
+        med = st.median(other(x) for x in seg)
+        if 0.05 < med < 0.85:
+            squint.append(name)
+            if med > closed_lvl[oe] + 0.10:
+                mins.append(closed_lvl[oe] + 0.08)
+            else:
+                warn.append(f"{name}: the other eye squints almost as much as when both eyes are closed; wink assist cannot separate them")
+    if mins:
+        rec["wink"].update({"assist": True, "assistMin": round(min(0.3, max(0.03, max(mins))), 3)})
+        print(f"  the other eye squints during {', '.join(squint)} -> wink.assist on, assistMin {rec['wink']['assistMin']}")
+        SPOKEN.append("Wink assist is on, so the open eye stays open while you wink.")
 
     bl = g.get("blinks", [])
     if len(bl) >= 30:

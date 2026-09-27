@@ -90,16 +90,48 @@ public sealed class ModuleConfig
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
     };
 
-    public static ModuleConfig Load(string path)
+    /// <summary>Load and validate. Returns null (with a reason) when the file is unreadable or invalid, so the caller can keep
+    /// the configuration it already has instead of silently dropping the user's calibration. A missing file gets the defaults.</summary>
+    public static ModuleConfig? TryLoad(string path, out string error)
     {
+        error = "";
         try
         {
-            if (File.Exists(path))
-                return JsonSerializer.Deserialize<ModuleConfig>(File.ReadAllText(path), Json) ?? new ModuleConfig();
-            var cfg = new ModuleConfig();
-            File.WriteAllText(path, JsonSerializer.Serialize(cfg, Json));
-            return cfg;
+            if (!File.Exists(path))
+            {
+                var def = new ModuleConfig();
+                File.WriteAllText(path, JsonSerializer.Serialize(def, Json));
+                return def;
+            }
+            var cfg = JsonSerializer.Deserialize<ModuleConfig>(File.ReadAllText(path), Json);
+            if (cfg == null) { error = "the file is empty or null"; return null; }
+            error = cfg.Validate();
+            return error == "" ? cfg : null;
         }
-        catch { return new ModuleConfig(); }
+        catch (Exception e) { error = e.Message; return null; }
+    }
+
+    /// <summary>Empty string when usable, otherwise the first problem found.</summary>
+    public string Validate()
+    {
+        if (Lid == null || Wink == null || Blink == null || Gaze == null) return "a section (lid, wink, blink or gaze) is missing or null";
+        bool Bad(float v, float lo, float hi) => !float.IsFinite(v) || v < lo || v > hi;
+        if (Bad(Lid.Deadband, 0f, 0.45f)) return "lid.deadband must be 0..0.45";
+        if (Bad(Lid.Smoothing, 0f, 1f) || Bad(Lid.Tau, 0f, 1f)) return "lid.smoothing and lid.tau must be 0..1";
+        if (Bad(Lid.MaxFloor, 0f, 1f) || Bad(Lid.MinCeil, 0f, 1f) || Bad(Lid.MinRange, 0.01f, 1f)) return "lid.maxFloor/minCeil/minRange out of range";
+        foreach (var (c, o, eye) in new[] { (Lid.LeftClosed, Lid.LeftOpen, "left"), (Lid.RightClosed, Lid.RightOpen, "right") })
+        {
+            if (c is float fc && Bad(fc, 0f, 1f)) return $"lid.{eye}Closed must be 0..1";
+            if (o is float fo && Bad(fo, 0f, 1f)) return $"lid.{eye}Open must be 0..1";
+            if (c is float a && o is float b && b - a < 0.05f) return $"lid.{eye}Open must be above lid.{eye}Closed";
+        }
+        if (Bad(Wink.Threshold, 0f, 1f) || Bad(Wink.Range, 0.01f, 2f) || Bad(Wink.Strength, 0f, 1f)) return "wink.threshold/range/strength out of range";
+        if (Bad(Wink.AssistOpen, 0f, 1f) || Bad(Wink.AssistClosed, 0f, 1f) || Bad(Wink.AssistMin, 0f, 1f)) return "wink.assist* levels must be 0..1";
+        if (Wink.AssistPersistMs < 0 || Wink.AssistReleaseMs < 0) return "wink.assist*Ms must not be negative";
+        if (Blink.HoldMs < 0 || Blink.CoupleMs < 0 || Blink.GlitchMinMs < 0) return "blink.*Ms must not be negative";
+        if (Bad(Blink.ReleasePerSec, 0f, 1000f) || Bad(Blink.AsymClosed, 0f, 1f) || Bad(Blink.AsymOpen, 0f, 1f) || Bad(Blink.SaturatedRaw, 0f, 1f))
+            return "blink.* values out of range";
+        if (Bad(Gaze.Scale, 0f, 10f)) return "gaze.scale must be 0..10";
+        return "";
     }
 }
