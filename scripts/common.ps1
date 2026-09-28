@@ -4,7 +4,7 @@
 $script:SteamAppId = "3329480"     # VRCFaceTracking on Steam
 $script:ModuleDll = "SteamFrameVRCFTModule.dll"
 $script:StockDll = "SteamLinkVRCFTModule.dll"
-$script:ModuleVersion = "0.2.2"
+$script:ModuleVersion = "0.2.3"
 $script:RepoUrl = "https://github.com/hakumaguro/vrcft-steam-frame"
 
 function Get-VrcftDataDir {
