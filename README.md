@@ -20,6 +20,18 @@ You need: **VRCFaceTracking** (from Steam), **SteamVR + Steam Link** with the Fr
    enabled on the headset). You type the headset password once; after that it installs everything and starts it
    automatically with every boot. Not comfortable with SSH? Read [Why SSH?](#why-ssh) first: it is only needed once,
    you can turn it off afterwards, and there is a way without it.
+
+   **What the password question looks like.** After the "authorising the key" line the window stops at:
+
+   ```
+   [info ] authorising the key on the headset: enter the headset password when asked (one time only)
+   steamos@192.168.1.50's password:
+   ```
+
+   Type the password of the headset's user account and press **Enter**. **Nothing appears while you type** (no dots, no
+   stars); that is normal for SSH, the keys are still being read. Then it prints `[ok   ] SSH login works` and carries on.
+   If you see `Permission denied, please try again.` the password was wrong (you get three tries; run menu 2 again to
+   restart). If you never set a password on the headset, set one first with `passwd` in a terminal on the headset.
 4. Put the headset on and choose **4** to calibrate. A voice guides you (about 90 seconds) and tells you the result.
 
 Something not working? Choose **3**: it checks every part and says what is wrong and how to fix it.

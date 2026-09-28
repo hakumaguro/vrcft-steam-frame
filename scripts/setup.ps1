@@ -263,7 +263,10 @@ if ($Headset) {
   if (Test-Path $KeyFile) { & ssh @sshOpts -o BatchMode=yes $Headset "true" 2>$null; $keyOk = ($LASTEXITCODE -eq 0) }
   if (-not $keyOk -and -not $DryRun) {
     Write-Step info "authorising the key on the headset: enter the headset password when asked (one time only)"
-    Get-Content "$KeyFile.pub" | & ssh -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new $Headset "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+    # The key goes in the command line, not through stdin: with stdin piped, Windows OpenSSH cannot read the password.
+    # Password auth is forced so other keys in the agent cannot use up the server's attempts first.
+    $pubKey = (Get-Content "$KeyFile.pub" -TotalCount 1).Trim()
+    & ssh -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new -o PubkeyAuthentication=no $Headset "mkdir -p ~/.ssh && chmod 700 ~/.ssh && { grep -qsF '$pubKey' ~/.ssh/authorized_keys || echo '$pubKey' >> ~/.ssh/authorized_keys; } && chmod 600 ~/.ssh/authorized_keys"
     & ssh @sshOpts -o BatchMode=yes $Headset "true" 2>$null; $keyOk = ($LASTEXITCODE -eq 0)
   }
   if ($DryRun) { Write-Step would "copy the headset scripts, build frameeyeosc, install the auto-start service" }

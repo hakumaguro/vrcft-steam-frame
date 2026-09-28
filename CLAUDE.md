@@ -9,7 +9,12 @@ Eye tracking for the Steam Frame in VRChat via VRCFaceTracking (VRCFT). Read `RE
   winks, wink assist; frameeyeosc auto-starts on the headset and survived a real reboot; `doctor.ps1` reports "All good".
 - `setup.ps1 -Headset` (menu 2) was run for real on 2026-09-27 against an already-set-up Frame: SSH login, target kept, build no-op,
   unit refreshed, service active, doctor "All good"; a second run changed nothing. Still never exercised: the first-time path on a fresh
-  headset (key authorisation by password, Rust install + first build). Treat that as a test when someone new tries it.
+  headset (Rust install + first build). Treat that as a test when someone new tries it. The key authorisation by password was tested
+  on 2026-09-28 with a throwaway key against the real headset: it used to pipe the public key into `ssh` (stdin), which made Windows
+  OpenSSH unable to read the password (reported by a user); now the key goes in the command line, password auth is forced and a
+  duplicate key is not appended. Gotcha when testing: a key file under `%TEMP%` can have an orphaned-SID ACL, and Windows ssh then
+  ignores it ("bad permissions"); use `icacls <key> /inheritance:r /grant:r "$env:USERNAME:F"`. The `!` box in Claude Code is bash
+  without a TTY: password prompts need a real PowerShell window.
 - Open ideas: verify the gaze scale (frameeyeosc +-1 == +-45 deg -> radians) against a reference; a first-run check in `Start Here.cmd`
   that VRCFT is running (users forget to start it from Steam each session; the doctor catches it).
 
