@@ -12,7 +12,8 @@
 The module writes samples to %TEMP%\\steamframe-trace.csv only while `trace` is on in its config; this tool turns it
 on for as long as it needs it and restores it afterwards.
 While SteamVR runs, a recording shows a dot in the headset (tools/overlay.py) to look at; its known angles let analyze
-report how far off the gaze is. Without the dot the recording falls back to spoken directions only.
+report how far off the gaze is. Without the dot (SteamVR not running, or --no-dot) the recording uses spoken
+directions only.
 """
 import argparse
 import csv
@@ -132,8 +133,11 @@ class Overlay:
     """The fixation dot in the headset: tools/overlay.py as a child process, so a SteamVR fault cannot end a recording.
     `ok` is False (with `why`) when the dot cannot be shown; show() then returns False and the caller carries on."""
 
-    def __init__(self):
+    def __init__(self, enabled=True):
         self.ok, self.why, self.p = False, "", None
+        if not enabled:
+            self.why = "turned off with --no-dot"
+            return
         try:
             self.p = subprocess.Popen([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "overlay.py")],
                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -386,7 +390,7 @@ def _record(a):
     t_lead = time.time()
     voice = Speaker()                        # started once, during the lead-in
     voice.say("Calibration starts soon. Put the headset on and keep your face relaxed.")
-    dot = Overlay()
+    dot = Overlay(not a.no_dot)
     steps = protocol(dot.ok)
     total = sum(s[1] for s in steps)
     if not dot.ok:
@@ -786,6 +790,8 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("calibrate"); c.add_argument("--lead", type=int, default=10, help="seconds to put the headset on"); c.set_defaults(fn=cmd_calibrate)
     r = sub.add_parser("record"); r.add_argument("--lead", type=int, default=8, help="seconds to put the headset on"); r.set_defaults(fn=cmd_record)
+    for p in (c, r):
+        p.add_argument("--no-dot", action="store_true", help="spoken directions only: no dot in the headset, no gaze check")
     an = sub.add_parser("analyze"); an.add_argument("dir", nargs="?"); an.add_argument("--apply", action="store_true"); an.add_argument("--speak", action="store_true", help="speak the result"); an.set_defaults(fn=cmd_analyze)
     sub.add_parser("watch").set_defaults(fn=cmd_watch)
     sub.add_parser("show").set_defaults(fn=cmd_show)

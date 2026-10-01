@@ -173,7 +173,8 @@ Calibration (menu 4) writes the per-eye levels and blink/wink settings for you; 
 | `trace` | write 30 ms samples to `%TEMP%\steamframe-trace.csv` (the calibration tool turns it on only while it needs it) |
 
 Command line: `python tools/tune.py calibrate | record | analyze [--apply] | watch | show | dot` (`dot` only shows the
-calibration dot at each position, to check that it is visible in the headset).
+calibration dot at each position, to check that it is visible in the headset). If you cannot see the dot, calibrate with
+`python tools/tune.py calibrate --no-dot`: spoken directions only, as before, without the gaze report.
 
 ## Known limits
 
