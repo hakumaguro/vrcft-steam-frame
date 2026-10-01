@@ -7,9 +7,12 @@
   tune.py analyze [DIR] --apply    ...and write the recommendation into the module's config (hot-reloaded)
   tune.py watch             live view of raw and output eyelid values
   tune.py show              print the module's current config
+  tune.py dot               show the fixation dot in the headset at each calibration position (to check it is visible)
 
 The module writes samples to %TEMP%\\steamframe-trace.csv only while `trace` is on in its config; this tool turns it
 on for as long as it needs it and restores it afterwards.
+While SteamVR runs, a recording shows a dot in the headset (tools/overlay.py) to look at; its known angles let analyze
+report how far off the gaze is. Without the dot the recording falls back to spoken directions only.
 """
 import argparse
 import csv
@@ -21,6 +24,7 @@ import shutil
 import statistics as st
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime
 
@@ -47,6 +51,16 @@ PROTOCOL = [
     ("look", 8, "Look around. Left, right, up, down."),
     ("open", 2, "Done."),
 ]
+# With the dot in the headset the "look" step becomes fixations at known angles (degrees, +x right, +y up), each
+# position twice: analyze fits a correction on one pass and tests it on the other.
+GAZE_TARGETS = [(0, 0), (-20, 0), (20, 0), (0, 15), (0, -15),
+                (0, 0), (0, -15), (0, 15), (20, 0), (-20, 0)]
+GAZE_SECS = 2.5
+GAZE_NAMES = {(0, 0): "centre", (-20, 0): "left", (20, 0): "right", (0, 15): "up", (0, -15): "down"}
+DOT_DIST = 3.0         # metres; far enough that the two eyes turn inwards by only ~0.6 degrees
+IPD = 0.063            # assumed eye distance, for that inward angle
+GAZE_SETTLE = 0.6      # seconds skipped after the dot jumps (reaction time + the eye movement)
+GAZE_MIN_SAMPLES = 15
 GUARD_START, GUARD_END = 1.3, 0.2
 SPOKEN = []   # short sentences for the spoken result of analyze
 MIN_LID_RANGE = 0.15   # raw open level must be at least this far above the closed level, per eye   # seconds skipped at each segment edge (prompt + reaction time)
@@ -110,6 +124,60 @@ class Speaker:
             self.p.stdin.close()
             if wait:
                 self.p.wait(timeout=30)
+        except Exception:
+            self.p.kill()
+
+
+class Overlay:
+    """The fixation dot in the headset: tools/overlay.py as a child process, so a SteamVR fault cannot end a recording.
+    `ok` is False (with `why`) when the dot cannot be shown; show() then returns False and the caller carries on."""
+
+    def __init__(self):
+        self.ok, self.why, self.p = False, "", None
+        try:
+            self.p = subprocess.Popen([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "overlay.py")],
+                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                      text=True, encoding="utf-8", bufsize=1)
+        except OSError as e:
+            self.why = str(e)
+            return
+        first = self._reply(8.0)
+        self.ok = first == "ready"
+        if not self.ok:
+            self.why = first[7:] if first.startswith("error: ") else (first or "no answer from overlay.py")
+
+    def _reply(self, timeout=2.0):
+        box = []
+        t = threading.Thread(target=lambda: box.append(self.p.stdout.readline().strip()), daemon=True)
+        t.start()
+        t.join(timeout)
+        return box[0] if box else ""
+
+    def _send(self, line):
+        if not self.ok:
+            return False
+        try:
+            self.p.stdin.write(line + "\n")
+            self.p.stdin.flush()
+            reply = self._reply()
+        except (OSError, ValueError):
+            reply = ""
+        if reply != "ok":
+            self.ok, self.why = False, reply or "overlay.py stopped answering"
+        return self.ok
+
+    def show(self, x_deg, y_deg):
+        return self._send(f"show {x_deg} {y_deg} {DOT_DIST}")
+
+    def hide(self):
+        return self._send("hide")
+
+    def close(self):
+        if not self.p:
+            return
+        try:
+            self.p.stdin.close()
+            self.p.wait(timeout=5)
         except Exception:
             self.p.kill()
 
@@ -186,7 +254,7 @@ def speak_wait(text):
 
 
 def read_trace(path):
-    """FRAME rows: time,FRAME,lx,ly,rx,ry,rawL,rawR,outL,outR,..."""
+    """FRAME rows: time,FRAME,lx,ly,rx,ry,rawL,rawR,outL,outR,... -> (time, rawL, rawR, outL, outR, lx, ly, rx, ry)"""
     rows, bad = [], 0
     with open(path, newline="", encoding="utf-8", errors="replace") as f:
         for p in csv.reader(f):
@@ -196,7 +264,8 @@ def read_trace(path):
                 bad += 1
                 continue
             try:
-                rows.append((tod(p[0]), float(p[6]), float(p[7]), float(p[8]), float(p[9])))
+                rows.append((tod(p[0]), float(p[6]), float(p[7]), float(p[8]), float(p[9]),
+                             float(p[2]), float(p[3]), float(p[4]), float(p[5])))
             except ValueError:
                 bad += 1
     if bad:
@@ -277,32 +346,74 @@ def cmd_record(a):
         return _record(a)
 
 
+def protocol(with_dot):
+    """The recording steps as (label, seconds, spoken text or None, dot position or None)."""
+    steps = []
+    for label, secs, text in PROTOCOL:
+        if not with_dot:
+            steps.append((label, secs, text, None))
+        elif label == "look":
+            steps += [("gaze", GAZE_SECS, None if i else "Follow the dot with your eyes.", t) for i, t in enumerate(GAZE_TARGETS)]
+        else:
+            steps.append((label, secs, text.replace("look straight ahead", "look at the dot"), None))
+    return steps
+
+
+def cmd_dot(a):
+    dot = Overlay()
+    if not dot.ok:
+        speak_wait("The dot cannot be shown. Start Steam V R and put the headset on, then try again.")
+        sys.exit(f"The dot cannot be shown: {dot.why}")
+    voice = Speaker()
+    try:
+        voice.say("You should see a dot. It moves to the centre, left, right, up and down.")
+        dot.show(0, 0)
+        time.sleep(5)
+        for t in GAZE_TARGETS[:5] + [(0, 0)]:
+            if not dot.show(*t):
+                sys.exit(f"The dot stopped working: {dot.why}")
+            print(f"  dot {GAZE_NAMES[t]}")
+            voice.say(GAZE_NAMES[t].capitalize() + ".")
+            time.sleep(a.secs)
+    finally:
+        voice.close()
+        dot.close()
+
+
 def _record(a):
     out = os.path.join(SESSIONS, datetime.now().strftime("%Y%m%d-%H%M%S"))
     os.makedirs(out, exist_ok=True)
-    total = sum(s for _, s, _ in PROTOCOL)
-    print(f"Session {out}\n{len(PROTOCOL)} steps, about {total} s. Put the headset on now; you have {a.lead} s.")
     t_lead = time.time()
     voice = Speaker()                        # started once, during the lead-in
     voice.say("Calibration starts soon. Put the headset on and keep your face relaxed.")
+    dot = Overlay()
+    steps = protocol(dot.ok)
+    total = sum(s[1] for s in steps)
+    if not dot.ok:
+        print(f"(no dot in the headset: {dot.why}; spoken directions only, so no gaze check)")
+    print(f"Session {out}\n{len(steps)} steps, about {total:.0f} s. Put the headset on now; you have {a.lead} s.")
     time.sleep(max(0.0, a.lead - (time.time() - t_lead)))
     labels = []
     t_start = time.time()
     try:
-        for label, secs, text in PROTOCOL:
+        for label, secs, text, target in steps:
+            shown = dot.show(*(target or (0, 0)))        # the dot rests in the centre between the gaze steps
             t0 = time.time()
-            print(f"  {label:<11} {secs:>2}s  {text}")
+            print(f"  {label:<11} {secs:>4}s  {text or 'dot ' + GAZE_NAMES[target]}")
             beep()
-            voice.say(text)
+            if text:
+                voice.say(text)
             time.sleep(max(0.0, secs - (time.time() - t0)))
-            labels.append((stamp(t0), stamp(time.time()), label))
+            tx, ty = target or ("", "")
+            labels.append((stamp(t0), stamp(time.time()), label, tx, ty, DOT_DIST if target else "", int(shown) if target else ""))
         beep(660, 300)
     finally:
         voice.close()
+        dot.close()
     time.sleep(0.5)
     with open(os.path.join(out, "labels.csv"), "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["start", "end", "label"])
+        w.writerow(["start", "end", "label", "tx", "ty", "dist", "shown"])
         w.writerows(labels)
     # keep only this session's part of the trace
     lo, hi = tod(stamp(t_start)) - 1, tod(stamp()) + 1
@@ -332,6 +443,138 @@ def load_session(d):
             seg = [x for x in rows if s <= x[0] <= e]
             groups.setdefault(r["label"], []).extend(seg)
     return rows, groups
+
+
+def fixation(seg, blink):
+    """The steady part of one dot step: (median, spread) of lx, ly, rx, ry, or None when too little is left.
+    Blinks (and the 150 ms around them), values pinned at the +-1 limit and outliers (2.5 x IQR) are dropped."""
+    bt = [x[0] for x in seg if blink(x)]
+    keep = [x for x in seg if max(abs(v) for v in x[5:9]) < 0.999 and not any(abs(x[0] - b) <= 0.15 for b in bt)]
+    if len(keep) >= GAZE_MIN_SAMPLES:
+        lim = []
+        for i in range(5, 9):
+            v = [x[i] for x in keep]
+            lim.append((st.median(v), 2.5 * max(pct(v, 0.75) - pct(v, 0.25), 0.004)))     # the trace has 0.001 steps
+        keep = [x for x in keep if all(abs(x[i + 5] - m) <= w for i, (m, w) in enumerate(lim))]
+    if len(keep) < GAZE_MIN_SAMPLES:
+        return None
+    return [st.median(x[i] for x in keep) for i in range(5, 9)], [st.pstdev(x[i] for x in keep) for i in range(5, 9)]
+
+
+def gaze_check(d, rows, nL, nR, cfg, warn):
+    """Report only: compare the gaze the module passes on with the known angles of the dot, and estimate what a per-eye
+    offset (+ gain) correction would leave. Nothing here goes into the recommended config. All angles in degrees."""
+    gz = cfg.get("gaze") if isinstance(cfg.get("gaze"), dict) else {}
+    scale = gz.get("scale", 1.0)
+    unit = [45.0 * scale * (-1 if gz.get(k) else 1) for k in ("invertX", "invertY", "invertX", "invertY")]   # lx, ly, rx, ry
+    blink = lambda x: min(nL(x[1]), nR(x[2])) < 0.30
+    steps, skipped = [], 0
+    with open(os.path.join(d, "labels.csv"), newline="") as f:
+        for r in csv.DictReader(f):
+            if r["label"] != "gaze" or r.get("shown") != "1":     # spoken directions alone are not a known angle
+                continue
+            tx, ty, dist = float(r["tx"]), float(r["ty"]), float(r["dist"])
+            seg = [x for x in rows if tod(r["start"]) + GAZE_SETTLE <= x[0] <= tod(r["end"]) - 0.1]
+            fx = fixation(seg, blink)
+            if not fx:
+                skipped += 1
+                continue
+            x = dist * math.tan(math.radians(tx))
+            # the left eye sits IPD/2 to the left of the point the dot is placed from, so for it the dot is further right
+            true = [math.degrees(math.atan2(x + IPD / 2, dist)), ty, math.degrees(math.atan2(x - IPD / 2, dist)), ty]
+            steps.append({"target": (tx, ty), "true": true, "meas": [m * u for m, u in zip(fx[0], unit)],
+                          "sd": [s * abs(u) for s, u in zip(fx[1], unit)],
+                          "lid": (st.median(nL(v[1]) for v in seg), st.median(nR(v[2]) for v in seg),
+                                  st.median(v[3] for v in seg), st.median(v[4] for v in seg))})
+    if not steps:
+        if skipped:
+            print(f"\nGaze check: no usable fixation in any of the {skipped} dot steps (blinking, or the eyes kept moving)")
+        return
+
+    def fit(pts, gain):
+        """Per channel (offset, gain) with measured = offset + gain * true, by least squares; gain 1 when not fitted."""
+        out = []
+        for c in range(4):
+            t, m = [p["true"][c] for p in pts], [p["meas"][c] for p in pts]
+            var = sum((v - st.mean(t)) ** 2 for v in t)
+            g = sum((a - st.mean(t)) * (b - st.mean(m)) for a, b in zip(t, m)) / var if gain and var > 1 else 1.0
+            out.append((st.mean(m) - g * st.mean(t), g if abs(g) > 0.05 else 1.0))
+        return out
+
+    def errors(pts, model):
+        """Per point and eye: distance in degrees between the (corrected) gaze and the dot."""
+        e = []
+        for p in pts:
+            c = [(p["meas"][i] - model[i][0]) / model[i][1] - p["true"][i] for i in range(4)]
+            e += [math.hypot(c[0], c[1]), math.hypot(c[2], c[3])]
+        return e
+
+    none = [(0.0, 1.0)] * 4
+    print("\nGaze check against the dot (degrees, + = right / up; what the module passes on now):")
+    print("  dot            left eye x      y     right eye x      y     off by  L      R")
+    for p in steps:
+        m, (el, er) = p["meas"], errors([p], none)
+        print(f"  {GAZE_NAMES.get(p['target'], str(p['target'])):<7}{p['target'][0]:>4.0f}{p['target'][1]:>4.0f}   {m[0]:>8.1f} {m[1]:>6.1f}   {m[2]:>10.1f} {m[3]:>6.1f}   {el:>10.1f} {er:>6.1f}")
+    if skipped:
+        print(f"  ({skipped} dot steps had no usable fixation and are left out)")
+    now = st.mean(errors(steps, none))
+    report = {"steps": len(steps), "skipped": skipped, "errorNow": round(now, 2),
+              "jitter": round(st.mean(s for p in steps for s in p["sd"]), 2)}
+    print(f"  average distance from the dot now: {now:.1f}")
+
+    # each position was shown twice: fit on one pass, test on the other, both ways round
+    first, second, seen = [], [], set()
+    for p in steps:
+        (second if p["target"] in seen else first).append(p)
+        seen.add(p["target"])
+    both = {p["target"] for p in first} & {p["target"] for p in second}
+    if len(both) >= 4:
+        for name, key, gain in (("offset only", "errorOffset", False), ("offset + gain", "errorOffsetGain", True)):
+            e = errors(second, fit(first, gain)) + errors(first, fit(second, gain))
+            report[key] = round(st.mean(e), 2)
+            print(f"  with a per-eye {name} correction: {st.mean(e):.1f}   (fitted on one pass, tested on the other)")
+        a, b = {p["target"]: p["meas"] for p in first}, {p["target"]: p["meas"] for p in second}
+        rep = [math.hypot(a[t][i] - b[t][i], a[t][i + 1] - b[t][i + 1]) for t in both for i in (0, 2)]
+        report["repeat"] = round(st.mean(rep), 2)
+        print(f"  the same dot looked at twice differs by {st.mean(rep):.1f}; no correction can do better than about that")
+        best = min(report["errorOffset"], report["errorOffsetGain"])
+        said = f"Gaze check: your eyes point {now:.1f} degrees off now. A correction would leave {best:.1f}."
+    else:
+        print("  too few positions seen twice to test a correction")
+        said = f"Gaze check: your eyes point {now:.1f} degrees off."
+    model = fit(steps, True)
+    # "shown" only means SteamVR accepted the dot. Eyes that did not follow it give a flat or unrepeatable result.
+    if skipped > len(steps) or report.get("repeat", 0) > 3 or max(abs(model[0][1]), abs(model[2][1])) < 0.3:
+        report["doubtful"] = True
+        print("  ! these numbers are not reliable: the dot was probably not visible, or the eyes did not follow it")
+        said = "The gaze check did not work. The dot was probably not visible, or your eyes did not follow it."
+    SPOKEN.append(said)
+    names = ("left x", "left y", "right x", "right y")
+    print("  fitted on all steps:  " + "   ".join(f"{n} {o:+.1f} x{g:.2f}" for n, (o, g) in zip(names, model)) + "   (offset, gain)")
+    print(f"  jitter while looking at one dot: {report['jitter']:.2f}")
+    report["fit"] = {n.replace(" ", "").replace("left", "l").replace("right", "r"): {"offset": round(o, 2), "gain": round(g, 3)}
+                     for n, (o, g) in zip(names, model)}
+    for axis, i, key in (("horizontal", 0, "invertX"), ("vertical", 1, "invertY")):
+        if model[i][1] < 0 and model[i + 2][1] < 0:
+            warn.append(f"the {axis} gaze runs the wrong way round: toggle gaze.{key}")
+    if all(abs(p["meas"][1] - p["meas"][3]) < 0.05 for p in steps):
+        print("  (the tracker reports one shared vertical angle for both eyes)")
+
+    # the lids at the three heights: looking down lowers the upper lid, which the lid calibration reads as closing
+    rows_ = {t[1]: [p["lid"] for p in steps if p["target"] == t] for t in ((0, 15), (0, 0), (0, -15))}
+    if all(rows_.values()):
+        lid = {ty: [st.mean(v[i] for v in ps) for i in range(4)] for ty, ps in rows_.items()}
+        print("  eyelids while looking     up   centre   down    (1 = the calibrated open level; in brackets what the module sends)")
+        for eye, i in (("left", 0), ("right", 1)):
+            print(f"    {eye:<6}" + " " * 13 + "  ".join(f"{lid[ty][i]:.2f} ({lid[ty][i + 2]:.2f})" for ty in (15, 0, -15)))
+        report["lid"] = {name: {"left": round(lid[ty][0], 3), "right": round(lid[ty][1], 3),
+                                "leftOut": round(lid[ty][2], 3), "rightOut": round(lid[ty][3], 3)}
+                         for name, ty in (("up", 15), ("centre", 0), ("down", -15))}
+        low = min(lid[-15][2], lid[-15][3])
+        if low < 0.8:
+            warn.append(f"looking down 15 degrees lowers the eyelid the module sends to {low:.2f} of open")
+    with open(os.path.join(d, "gaze-report.json"), "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
 
 
 def cmd_analyze(a):
@@ -467,6 +710,8 @@ def cmd_analyze(a):
         else:
             print("\nBlinks: none detected in the blink step")
 
+    gaze_check(d, rows, nL, nR, cfg_now, warn)
+
     print("\nRecommended config changes:")
     print(json.dumps(rec, indent=2))
     for w in warn:
@@ -544,6 +789,7 @@ def main():
     an = sub.add_parser("analyze"); an.add_argument("dir", nargs="?"); an.add_argument("--apply", action="store_true"); an.add_argument("--speak", action="store_true", help="speak the result"); an.set_defaults(fn=cmd_analyze)
     sub.add_parser("watch").set_defaults(fn=cmd_watch)
     sub.add_parser("show").set_defaults(fn=cmd_show)
+    dt = sub.add_parser("dot"); dt.add_argument("--secs", type=float, default=3, help="seconds per position"); dt.set_defaults(fn=cmd_dot)
     a = ap.parse_args()
     a.fn(a)
 

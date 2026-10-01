@@ -43,6 +43,30 @@ lagged their beeps and piled up; the user could not hear them (2026-09-28). `Spe
 the lead-in, 7-10 ms per prompt, a new prompt cancels a late one). Not caused by 0.2.2: the prompt code was unchanged since v0.2.1.
 Not done yet: offline replay tests for the eyelid pipeline (the replays in this history were ad-hoc scripts).
 
+## Gaze check with a dot in the headset (2026-10-01, uncommitted; works on the Frame through Steam Link)
+
+- First real run (session `20261001-182041`, user confirmed the dot is visible at all five positions): error now 2.7 deg, with a per-eye
+  offset 2.0, offset+gain 2.1 (held-out), same dot twice differs by 1.2, jitter 0.46. Fitted gain 0.94-0.99, vertical offset +0.4 deg,
+  horizontal offset L +2.3 / R +1.6: the +-45 deg scale and both axis directions are right, and a module-side gaze correction would gain
+  only ~0.7 deg in this session. Looking down 15 deg the eyes read 7 deg apart horizontally (L +5.4, R -1.6). Lids barely change with
+  pitch (down 0.95 of open). One session only; offsets may depend on how the headset sits.
+- Second run 10 min later (`20261001-183006`): error now 4.1, offset 2.6, offset+gain 2.6, repeat 1.0. Horizontal fit is stable between
+  the runs (offset ~+2, gain 0.92-0.96); the vertical offset moved +0.4 -> +2.4 and the vertical value drifts with horizontal position
+  (left +4..5, right -2..-3). Run 1's fit applied to run 2 gives ~3.5 (hand-computed from the printed table), so a stored correction
+  would gain ~0.6 deg. Conclusion so far: no module-side gaze correction. Lid levels run 1 -> 2: open L 0.80/0.76, R 0.65/0.66;
+  closed L 0.15/0.25, R 0.28/0.23. `wink_right` FAIL in both (left lid drops to 0.70 / 0.55 of open).
+- The -4..-23 deg vertical values in old "look straight ahead" steps were the user looking elsewhere, not a tracker offset.
+
+- `tools/overlay.py`: head-locked SteamVR overlay (bullseye, 2 deg, 3 m) through `openvr_api.dll` + ctypes (`FnTable:IVROverlay_028`,
+  table positions checked against pyopenvr). Child process of `tune.py` (class `Overlay`); if it cannot start (SteamVR not running ->
+  "Not starting vrserver for background app") the recording uses the old spoken "look around" step. `tune.py dot` only shows the dot.
+- With the dot, the `look` step becomes 10 `gaze` steps (centre, +-20 deg x, +-15 deg y, each twice, 2.5 s); `labels.csv` gains
+  `tx,ty,dist,shown`. `gaze_check` in `analyze` is report-only (never in `rec`): error now (raw x `gaze.scale` x 45 deg, inverts applied)
+  vs. error with a per-eye offset / offset+gain correction fitted on one pass and tested on the other, repeatability, lid level at
+  up/centre/down. Also written to `<session>/gaze-report.json` and spoken in one sentence.
+- Verified: 9 old sessions give byte-identical analyze output; a synthetic session (known offset/gain, blinks, saccade delay) is recovered.
+- frameeyeosc sends the same Y for both eyes (ly == ry in 99.9 % of old samples); X is per eye.
+
 ## Working with the user
 
 The user is in VR most of the time and cannot read text in the headset. Prefer spoken output (`Say` in `common.ps1`, `speak` in `tune.py`),

@@ -23,7 +23,7 @@ Copy-Item "$root\module\bin\Release\net10.0\$script:ModuleDll" $stage
 Copy-Item "$root\Start Here.cmd", "$root\README.md", "$root\LICENSE" $stage
 Copy-Item "$root\scripts\common.ps1", "$root\scripts\setup.ps1", "$root\scripts\doctor.ps1", "$root\scripts\headset-setup.sh",
           "$root\scripts\headset-install.sh", "$root\scripts\headset-run.sh", "$root\scripts\frameeyeosc.service" "$stage\scripts"
-Copy-Item "$root\tools\tune.py" "$stage\tools"
+Copy-Item "$root\tools\tune.py", "$root\tools\overlay.py" "$stage\tools"
 $zip = Join-Path $root "dist\$name.zip"
 Remove-Item $zip -ErrorAction SilentlyContinue
 Compress-Archive -Path $stage -DestinationPath $zip

@@ -38,6 +38,24 @@ Something not working? Choose **3**: it checks every part and says what is wrong
 
 **Always start VRCFaceTracking from Steam.** Starting its `.exe` directly skips the modules (VRCFT quirk).
 
+## Using the headset with more than one PC
+
+The headset sends its eye data to **one** PC address. After playing on another PC, the first PC gets nothing from the
+headset: gaze still moves (Steam Link fallback), but blinks are guessed and winks don't work.
+
+- **Every time you switch PCs, run menu 2 on the PC you are about to use.** It points the headset at that PC and changes
+  nothing else; after the first time it takes a few seconds (nothing is rebuilt).
+- SSH must be on in the headset for menu 2. If you turned it off after setup, turn it on again first.
+- **You do not calibrate again when you switch.** Each PC keeps its own calibration (it is stored on the PC, in
+  `steamframe-config.json`), and it stays valid while the headset is pointed elsewhere. Example: PCs A and B are both
+  calibrated and you move from A to B: run menu **2** on B, nothing else.
+- A PC you have never used needs menu **1** once and a calibration (menu **4**) once. Instead of calibrating there, you
+  can copy `steamframe-config.json` from the other PC (menu **6** opens the folder on each PC): the values describe your
+  eyes and the headset, not the PC.
+- Calibrate again only when blinks or winks look wrong, the same as with one PC.
+- Not sure which PC the headset is pointed at? Menu **3** on the PC you are using says "only the Steam Link fallback"
+  when it is not this one.
+
 ## Why SSH?
 
 **Short version:** the eyelid data never leaves the headset on its own, so a small program has to run *on the headset* to
@@ -95,6 +113,7 @@ and `~/.cargo/bin/rustup self uninstall` for Rust.
 | Status says "no eye data" | Wear the headset and connect Steam Link. For eyelids, the headset part must run: menu **2** sets it up again. |
 | Status says "only the Steam Link fallback" | Gaze works, eyelids are guessed. The headset part is not sending: menu **2**, or on the headset `systemctl --user status frameeyeosc`. |
 | Eyelids stopped after a headset reboot or network change ("only the Steam Link fallback") | The headset may now reach the PC over a different network. Run menu **2** again: it picks the address that works and keeps the rest. |
+| Eyelids stopped after you used the headset with another PC | The headset still sends to that PC. Run menu **2** on this one (see "Using the headset with more than one PC"). |
 | Status says "your settings file has an error" | The module ignored the broken `steamframe-config.json` and kept the previous settings. Fix it, restore `steamframe-config.json.bak`, or calibrate again (menu 4). |
 | Status says "started without its modules" | Close VRCFaceTracking and start it from Steam. |
 | Status mentions the old SteamLink module / port 9015 | Menu **1** moves the stock SteamLink module aside (menu **7** puts it back). |
@@ -110,7 +129,7 @@ Logs (PC): `%TEMP%\steamframe-module.log` (only changes are logged, capped at 1 
 | 1 Set up / update | `scripts\setup.ps1`: finds VRCFaceTracking in any Steam library, installs or updates the module (your calibration is kept), moves the stock SteamLink module aside, sets VRCFT's output to VRChat's port 9000, sets Steam Link to share eye data on port 9015 (only while SteamVR is closed, with a backup), checks the firewall rule (offers an admin prompt), restarts VRCFaceTracking. `-DryRun` shows what would change. |
 | 2 Headset | `setup.ps1 -Headset user@host`: SSH key (password once), builds [frameeyeosc](https://github.com/konsti219/frameeyeosc) on the headset (Rust in `~/.cargo`, nothing outside your home folder), installs an auto-start service that sends to the PC address the headset sees. |
 | 3 Status | `scripts\doctor.ps1`: checks every part and speaks a summary. |
-| 4 Calibrate | `tools\tune.py calibrate`: spoken prompts (open, close, winks, blinks), then measures your eyes and applies the result. |
+| 4 Calibrate | `tools\tune.py calibrate`: spoken prompts (open, close, winks, blinks), then measures your eyes and applies the result. While SteamVR runs it also shows a dot in the headset to look at, and reports how many degrees your gaze is off (a report only; nothing is corrected yet). |
 | 5 Live view | raw tracker vs output eyelids, updated live. |
 | 7 Uninstall | removes the module (calibration saved and restored on reinstall) and restores the stock SteamLink module. |
 
@@ -153,7 +172,8 @@ Calibration (menu 4) writes the per-eye levels and blink/wink settings for you; 
 | `gaze.scale / invertX / invertY`, `swapEyes` | gaze scaling and orientation fixes |
 | `trace` | write 30 ms samples to `%TEMP%\steamframe-trace.csv` (the calibration tool turns it on only while it needs it) |
 
-Command line: `python tools/tune.py calibrate | record | analyze [--apply] | watch | show`.
+Command line: `python tools/tune.py calibrate | record | analyze [--apply] | watch | show | dot` (`dot` only shows the
+calibration dot at each position, to check that it is visible in the headset).
 
 ## Known limits
 
