@@ -16,10 +16,10 @@ fi
 PC="${1:?usage: headset-install.sh <PC-IP> [port]  |  --info}"
 PORT="${2:-9020}"
 
-# frameeyeosc understands shared-memory layout version 4 only
+# frameeyeosc (as built by headset-setup.sh) understands shared-memory layout versions 4 and 5
 if [ -r /dev/shm/eye-server.mmap ]; then
   ver=$(od -A n -t u4 -N 4 /dev/shm/eye-server.mmap | tr -d ' ')
-  if [ "$ver" != "4" ]; then echo "WARNING: eye shared memory is version $ver, frameeyeosc expects 4 (a Frame update changed it); it may refuse to start"; fi
+  if [ "$ver" != "4" ] && [ "$ver" != "5" ]; then echo "WARNING: eye shared memory is version $ver, frameeyeosc expects 4 or 5 (a Frame update changed it); it may refuse to start"; fi
 else
   echo "note: /dev/shm/eye-server.mmap not present yet (eye tracking service not running?); the service will retry"
 fi
