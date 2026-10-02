@@ -5,12 +5,39 @@ per-eye gaze, real blinks and winks. Mouth tracking is not possible: the Frame h
 
 > Unofficial. It reads a private, undocumented format on the headset that a Frame update can change. Use at your own risk.
 
+> ## This is the development branch `steamvr-eyelids`. It is not a release.
+>
+> **Tested only on this combination** (2026-10-02, one headset, one PC):
+>
+> | | Version |
+> |---|---|
+> | Steam Frame | **SteamOS 0.4.3 (Beta)**, build 20260930.6234839, eye shared-memory version 5 |
+> | SteamVR on the PC | **2.18.2 (Beta)** |
+> | VRCFaceTracking | 5.4.5 (Steam) |
+> | PC | Windows 11 |
+>
+> **Do not install this branch with earlier versions.** What is new here (each eye's eyelid sent by SteamVR itself, so no
+> headset part is needed) only exists from SteamOS 0.4.3 **and** SteamVR 2.18.2 on. With anything older, SteamVR sends no
+> eyelid values: blinks are guessed and winks do not work, and this branch has not been tested there at all. For earlier
+> versions use the released version from the `master` branch:
+> [v0.2.2](https://github.com/hakumaguro/vrcft-steam-frame/releases/latest).
+>
+> Both required versions were beta when this was written, so they can still change and break this. The branch will be
+> merged and released once they are in the normal (non-beta) channels.
+>
+> **To try it:** you need SteamOS 0.4.3+ on the Frame and SteamVR 2.18.2+ on the PC (both from their beta channels). There
+> is no zip for this branch: download the source of this branch (`git clone -b steamvr-eyelids
+> https://github.com/hakumaguro/vrcft-steam-frame`, or "Code > Download ZIP" with this branch selected), close SteamVR,
+> run `Start Here.cmd` and choose **1** (it builds the module and offers to install the .NET SDK), then **4** to calibrate.
+> Skip menu **2**. Leave "Track Dominant Eye Only" off in the headset.
+
 ## Quick start
 
 You need: **VRCFaceTracking** (from Steam), **SteamVR + Steam Link** with the Frame, and an avatar with VRCFT eye tracking
 (`FT/v2` parameters). For calibration, also **Python 3** ([python.org](https://www.python.org/downloads/)).
 
-1. Download **`vrcft-steam-frame-<version>.zip`** from the [latest release](https://github.com/hakumaguro/vrcft-steam-frame/releases/latest)
+1. *(On this development branch: see the box at the top instead; the release zip does not contain this branch.)*
+   Download **`vrcft-steam-frame-<version>.zip`** from the [latest release](https://github.com/hakumaguro/vrcft-steam-frame/releases/latest)
    and unzip it anywhere. (It contains the ready-built module, so nothing else needs installing. Downloading the source
    instead also works: setup then builds the module and offers to install the .NET SDK for your user.)
 2. **Close SteamVR**, then double-click **`Start Here.cmd`** and choose **1**.
