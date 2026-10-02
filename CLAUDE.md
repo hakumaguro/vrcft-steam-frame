@@ -101,7 +101,11 @@ Not done yet: offline replay tests for the eyelid pipeline (the replays in this 
   disabled). When frameeyeosc sends, the module still prefers it (per-eye gaze, `lid` levels, glitch rule on), so that path needs
   its own calibration on 0.4.3.
 - No release for now (user, 2026-10-02): this was only used with beta versions on both sides (SteamOS 0.4.3, SteamVR 2.18.2).
-  Latest release stays v0.2.2; revisit when those versions are on the stable channels. The replay tool and the test scripts are in `sessions/20261002-steamvr-lids-dev/`.
+  Latest release stays v0.2.2; revisit when those versions are on the stable channels.
+- **To do before that release** (asked by the user): a step that turns frameeyeosc off on the headset for people who already
+  enabled it with an older version (`systemctl --user disable --now frameeyeosc`; needs SSH or the headset's terminal, so a
+  setup option plus README update instructions), and a doctor hint for updaters. Reason: the old build restart-loops on
+  shared-memory version 5, and a working one makes the module prefer frameeyeosc over SteamVR's values. The replay tool and the test scripts are in `sessions/20261002-steamvr-lids-dev/`.
 
 ## SteamOS 0.4.3 beta + SteamVR beta 2.18.2 (measured 2026-10-02)
 
