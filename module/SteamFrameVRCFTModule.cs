@@ -7,8 +7,9 @@ namespace SteamFrameVRCFTModule;
 /// <summary>
 /// Eye tracking for Steam Frame. Two sources, best first:
 ///  1. frameeyeosc running on the headset (real per-eye gaze + eyelid openness) -> UDP 9020
-///  2. the Steam Link driver's OSC output (SteamVR OSC Output Port 9015, share eye tracking on) -> gaze only,
-///     with a heuristic blink (the driver's eyelid value is always 0 and both eyes are mirrored).
+///  2. the Steam Link driver's OSC output (SteamVR OSC Output Port 9015, share eye tracking on) -> one gaze direction
+///     for both eyes, plus per-eye eyelids when SteamVR sends them (SteamVR 2.18.2+ with SteamOS 0.4.3+). Older
+///     versions send no eyelid value, so the blink is guessed there.
 /// </summary>
 public class SteamFrameVRCFTModule : ExtTrackingModule
 {
@@ -16,7 +17,8 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
     private const int FramePort = 9020;
     private const float GazeUnit = MathF.PI / 4f;   // frameeyeosc: +-1 == +-45 degrees
 
-    // Steam Link fallback blink heuristic
+    private const int SteamLidFreshMs = 1000;       // per-eye lids from SteamVR older than this are not used (same limit as the gaze)
+    // Steam Link blink heuristic, for SteamVR versions that send no eyelid values
     private const float OpenBelowY = 0.90f, ClosedAboveY = 1.00f, CollapsedGazeMag = 1.5f;
 
     private static readonly string TracePath = Path.Combine(Path.GetTempPath(), "steamframe-trace.csv");
@@ -38,95 +40,22 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
 
     private static void FileLog(string m) => AppendCapped(LogPath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {m}{Environment.NewLine}", MaxLogBytes);
 
-    private string _source = "";
+    private string _source = "", _lids = "none";
+    private int _lidsIdentical;
     private long _lastStatus;
     private string _startError = "";
     private string _configError = "";
     private bool _neutralSent;
 
     private OscReceiver? _osc, _frame;
-    private long _lastTrace, _lastCfgCheck, _lastLidTick;
+    private long _lastTrace, _lastCfgCheck;
     private float _closed, _gx, _gy;
 
     private string _cfgPath = "steamframe-config.json";
     private DateTime _cfgStamp;
     private ModuleConfig _cfg = new();
 
-    private readonly LidCal _calL = new(), _calR = new();
-    private float _holdL = 1f, _holdR = 1f;
-    private long _holdUntilL, _holdUntilR, _asymSince, _asymLastSeen, _glitchSince, _glitchLastSeen;
-
-    /// <summary>Per-eye lid calibration. Each eye reports its own "closed" and "open" raw level, so each one tracks
-    /// a smoothed floor/ceiling (or uses a fixed calibration from the tuning tool).</summary>
-    private sealed class LidCal
-    {
-        public float Sm = 0.7f, Lo = 0.10f, Hi = 0.85f;
-
-        public float Map(float raw, ModuleConfig.LidConfig c, float? fixedClosed, float? fixedOpen)
-        {
-            if (fixedClosed is float fc && fixedOpen is float fo && fo - fc > 0.05f)
-            {
-                Lo = fc; Hi = fo;
-            }
-            else
-            {
-                Sm += (raw - Sm) * c.Smoothing;
-                if (Sm < Lo) Lo = Sm; else Lo += (Sm - Lo) * c.Tau;
-                if (Sm > Hi) Hi = Sm; else Hi += (Sm - Hi) * c.Tau;
-                Lo = Math.Clamp(Lo, 0f, c.MaxFloor);
-                Hi = Math.Clamp(Hi, MathF.Min(1f, MathF.Max(c.MinCeil, Lo + c.MinRange)), 1f);   // lower bound never above 1
-            }
-            float n = (raw - Lo) / (Hi - Lo);
-            return Math.Clamp((n - c.Deadband) / (1f - 2f * c.Deadband), 0f, 1f);
-        }
-    }
-
-    /// <summary>The tracker couples the eyes (closing one drags the other to ~0.5). When the lids differ by more than the
-    /// threshold, push the lower one toward closed and the higher one toward open.</summary>
-    private static void Sharpen(ref float a, ref float b, ModuleConfig.WinkConfig w)
-    {
-        if (w.Strength <= 0f) return;
-        float d = a - b, ad = MathF.Abs(d);
-        if (ad <= w.Threshold) return;
-        float k = Math.Clamp((ad - w.Threshold) / MathF.Max(w.Range, 0.01f), 0f, 1f) * w.Strength;
-        if (d > 0) { b *= 1f - k; a += (1f - a) * k; } else { a *= 1f - k; b += (1f - b) * k; }
-    }
-
-    /// <summary>Keep a lid at its lowest recent value for HoldMs, then release upward, so fast blinks reach full depth.</summary>
-    private static float PeakHold(float v, ref float hold, ref long until, long now, float dt, ModuleConfig.BlinkConfig b)
-    {
-        if (b.HoldMs <= 0) { hold = v; return v; }
-        if (v <= hold) { hold = v; until = now + b.HoldMs; }
-        else if (now >= until) hold = MathF.Min(v, hold + b.ReleasePerSec * dt);
-        return MathF.Min(v, hold);
-    }
-
-    /// <summary>Wink assist state: 0 none, 1 right eye closed (left should be open), 2 left eye closed (right should be open).</summary>
-    private int _assist;
-    private long _assistSince, _assistLast = long.MinValue / 2;
-
-    /// <returns>true when the assist is holding an eye open (so wink sharpening is skipped).</returns>
-    private bool ApplyWinkAssist(ref float mol, ref float mor, long now, ModuleConfig.WinkConfig w)
-    {
-        int which = 0;
-        if (mor < w.AssistClosed && mol > w.AssistMin) which = 1;
-        else if (mol < w.AssistClosed && mor > w.AssistMin) which = 2;
-
-        if (which != 0)
-        {
-            _assistLast = now;
-            if (_assistSince == 0) _assistSince = now;
-            if (now - _assistSince >= w.AssistPersistMs) _assist = which;
-        }
-        else if (now - _assistLast > w.AssistReleaseMs)
-        {
-            _assistSince = 0; _assist = 0;
-        }
-
-        if (_assist == 0 || (which != 0 && which != _assist)) return false;
-        if (_assist == 1) mol = MathF.Max(mol, w.AssistOpen); else mor = MathF.Max(mor, w.AssistOpen);
-        return true;
-    }
+    private readonly LidPipeline _lidsFrame = new(), _lidsSteam = new();
 
     public override (bool SupportsEye, bool SupportsExpression) Supported => (true, false);
 
@@ -204,13 +133,14 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
         if (_frame != null && t0 - _frame.LastAnyTicks < 500 && FrameActive(out var f))
         {
             SetSource("frameeyeosc");
+            SetLids("frameeyeosc");
             UpdateFromFrame(f, t0);
             return;
         }
         bool steamLinkFresh = _osc != null && _osc.LastPacketTicks != 0 && t0 - _osc.LastPacketTicks < 1000;
         SetSource(steamLinkFresh ? "steamlink" : "none");
-        if (steamLinkFresh) { _neutralSent = false; UpdateFromSteamLink(); }
-        else SetNeutralEyes();
+        if (steamLinkFresh) { _neutralSent = false; UpdateFromSteamLink(t0); }
+        else { SetLids("none"); SetNeutralEyes(); }
     }
 
     // ---- source 1: frameeyeosc (per-eye) -------------------------------------------------------------
@@ -226,39 +156,7 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
         e.Left.Gaze.x = f.lx * sx;  e.Left.Gaze.y = f.ly * sy;
         e.Right.Gaze.x = f.rx * sx; e.Right.Gaze.y = f.ry * sy;
 
-        float mol = _calL.Map(f.ol, c.Lid, c.Lid.LeftClosed, c.Lid.LeftOpen);
-        float mor = _calR.Map(f.or, c.Lid, c.Lid.RightClosed, c.Lid.RightOpen);
-        // Blink vs wink: a lopsided closure that has not lasted CoupleMs is a blink -> close both eyes.
-        bool coupled = false;
-        bool asym = c.Blink.CoupleMs > 0 && MathF.Min(mol, mor) < c.Blink.AsymClosed && MathF.Max(mol, mor) > c.Blink.AsymOpen;
-        // Glitch signature: one lid closed while the other is pinned at its raw ceiling -> a blink, however long it lasts.
-        bool glitch = c.Blink.SaturatedRaw > 0f
-            && ((f.or >= c.Blink.SaturatedRaw && mol < c.Blink.AsymClosed) || (f.ol >= c.Blink.SaturatedRaw && mor < c.Blink.AsymClosed));
-        if (glitch)
-        {
-            _glitchLastSeen = nowMs;
-            if (_glitchSince == 0) _glitchSince = nowMs;
-        }
-        else if (nowMs - _glitchLastSeen > 20) _glitchSince = 0;
-        if (_glitchSince != 0 && nowMs - _glitchSince >= c.Blink.GlitchMinMs)
-        {
-            mol = mor = MathF.Min(mol, mor); coupled = true;
-        }
-        else if (asym)
-        {
-            _asymLastSeen = nowMs;
-            if (_asymSince == 0) _asymSince = nowMs;
-            if (nowMs - _asymSince < c.Blink.CoupleMs) { mol = mor = MathF.Min(mol, mor); coupled = true; }
-        }
-        else if (nowMs - _asymLastSeen > 60) _asymSince = 0;   // small gaps do not restart the timer
-        bool lifted = false;
-        if (coupled) { _assist = 0; _assistSince = 0; }
-        else if (c.Wink.Assist) lifted = ApplyWinkAssist(ref mol, ref mor, nowMs, c.Wink);
-        if (!coupled && !lifted) Sharpen(ref mol, ref mor, c.Wink);
-        float dt = _lastLidTick == 0 ? 0.01f : Math.Min((nowMs - _lastLidTick) / 1000f, 0.1f);
-        _lastLidTick = nowMs;
-        mol = PeakHold(mol, ref _holdL, ref _holdUntilL, nowMs, dt, c.Blink);
-        mor = PeakHold(mor, ref _holdR, ref _holdUntilR, nowMs, dt, c.Blink);
+        var (mol, mor) = _lidsFrame.Process(f.ol, f.or, c, c.Lid, c.Lid.MaxFloor, glitchRule: true, nowMs);
         e.Left.Openness = mol; e.Right.Openness = mor;
 
         e.Left.PupilDiameter_MM = 5f; e.Right.PupilDiameter_MM = 5f;   // unsupported, but must be set
@@ -268,7 +166,7 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
         {
             _lastTrace = nowMs;
             // invariant culture: with a decimal comma the CSV would gain extra columns and tune.py would misread it
-            AppendCapped(TracePath, FormattableString.Invariant($"{DateTime.Now:HH:mm:ss.fff},FRAME,{f.lx:F3},{f.ly:F3},{f.rx:F3},{f.ry:F3},{f.ol:F3},{f.or:F3},{mol:F3},{mor:F3},{_calL.Lo:F2},{_calL.Hi:F2},{_calR.Lo:F2},{_calR.Hi:F2}") + Environment.NewLine, MaxTraceBytes);
+            AppendCapped(TracePath, FormattableString.Invariant($"{DateTime.Now:HH:mm:ss.fff},FRAME,{f.lx:F3},{f.ly:F3},{f.rx:F3},{f.ry:F3},{f.ol:F3},{f.or:F3},{mol:F3},{mor:F3},{_lidsFrame.L.Lo:F2},{_lidsFrame.L.Hi:F2},{_lidsFrame.R.Lo:F2},{_lidsFrame.R.Hi:F2}") + Environment.NewLine, MaxTraceBytes);
         }
     }
 
@@ -280,25 +178,53 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
         return active && _frame.Latest.ContainsKey("/avatar/parameters/FT/v2/EyeLeftX");
     }
 
-    // ---- source 2: Steam Link driver OSC (fallback) --------------------------------------------------
+    // ---- source 2: Steam Link driver OSC ------------------------------------------------------------
 
-    private void UpdateFromSteamLink()
+    private void UpdateFromSteamLink(long nowMs)
     {
         var osc = _osc!;
-        // Blink heuristic: the driver's EyesClosedAmount is always 0 on Steam Frame, but when the eyes close they roll up
-        // and the normalised vertical eye value (LeftEyeY/RightEyeY, normally ~0.2-0.85) saturates at ~1.0+.
-        float ly = osc.Latest.TryGetValue("/avatar/parameters/LeftEyeY", out var lv) && lv.Length > 0 ? lv[0] : 0.5f;
-        float ry = osc.Latest.TryGetValue("/avatar/parameters/RightEyeY", out var rv) && rv.Length > 0 ? rv[0] : ly;
-        // Rolling the eyes up while open also pushes Y to ~1.0, but then the gaze vector stays valid (|g| ~25).
-        // Closed eyes collapse the gaze vector (|g| ~0.1-0.5), so require both.
+        var c = _cfg;
         float gmag = MathF.Sqrt(osc.Gaze[0] * osc.Gaze[0] + osc.Gaze[1] * osc.Gaze[1] + osc.Gaze[2] * osc.Gaze[2]);
-        float rawClosed = gmag < CollapsedGazeMag
-            ? Math.Clamp((MathF.Max(ly, ry) - OpenBelowY) / (ClosedAboveY - OpenBelowY), 0f, 1f)
-            : 0f;
-        _closed += (rawClosed - _closed) * (rawClosed > _closed ? 0.6f : 0.4f);
-        _closed = MathF.Max(_closed, osc.EyesClosed);
+        bool perEye = osc.LastLidTicks != 0 && nowMs - osc.LastLidTicks < SteamLidFreshMs;
+        SetLids(perEye ? "steamvr" : "guessed");
+        float mol, mor;
+        bool holdGaze;
+        if (perEye)
+        {
+            // SteamVR sends closedness per eye (0 open .. 1 closed, already 0 when closed), so only the open level adapts.
+            float ol = 1f - osc.ClosedL, or = 1f - osc.ClosedR;
+            if (c.SwapEyes) (ol, or) = (or, ol);
+            // No glitch rule here: on this scale an open eye reads exactly 1.0 during a normal wink.
+            (mol, mor) = _lidsSteam.Process(ol, or, c, c.SteamVrLid, maxFloor: 0f, glitchRule: false, nowMs);
+            // The length of the gaze point is no sign of closed eyes here: it is the distance the eyes converge at, and it
+            // is below CollapsedGazeMag for most of the time while looking at something near.
+            holdGaze = mol < 0.5f && mor < 0.5f;
+            NoteLidsIdentical(osc.LidsIdentical);
+            if (c.Trace && nowMs - _lastTrace >= 30)
+            {
+                _lastTrace = nowMs;
+                float tx = _gx / GazeUnit, ty = _gy / GazeUnit;   // same columns and units as the FRAME rows
+                AppendCapped(TracePath, FormattableString.Invariant($"{DateTime.Now:HH:mm:ss.fff},SLINK,{tx:F3},{ty:F3},{tx:F3},{ty:F3},{ol:F3},{or:F3},{mol:F3},{mor:F3},{_lidsSteam.L.Lo:F2},{_lidsSteam.L.Hi:F2},{_lidsSteam.R.Lo:F2},{_lidsSteam.R.Hi:F2}") + Environment.NewLine, MaxTraceBytes);
+            }
+        }
+        else
+        {
+            // Blink heuristic: without eyelid values, closed eyes show as a rolled-up gaze: the normalised vertical eye
+            // value (LeftEyeY/RightEyeY, normally ~0.2-0.85) saturates at ~1.0+.
+            float ly = osc.Latest.TryGetValue("/avatar/parameters/LeftEyeY", out var lv) && lv.Length > 0 ? lv[0] : 0.5f;
+            float ry = osc.Latest.TryGetValue("/avatar/parameters/RightEyeY", out var rv) && rv.Length > 0 ? rv[0] : ly;
+            // Rolling the eyes up while open also pushes Y to ~1.0, but then the gaze vector stays valid (|g| ~25).
+            // Closed eyes collapse the gaze vector (|g| ~0.1-0.5), so require both.
+            float rawClosed = gmag < CollapsedGazeMag
+                ? Math.Clamp((MathF.Max(ly, ry) - OpenBelowY) / (ClosedAboveY - OpenBelowY), 0f, 1f)
+                : 0f;
+            _closed += (rawClosed - _closed) * (rawClosed > _closed ? 0.6f : 0.4f);
+            _closed = MathF.Max(_closed, osc.EyesClosed);
+            mol = mor = 1f - _closed;
+            holdGaze = _closed >= 0.5f;
+        }
 
-        if (_closed < 0.5f)   // hold the last open-eye gaze while blinking
+        if (!holdGaze)   // keep the last open-eye gaze while blinking
         {
             _gx = MathF.Atan2(osc.Gaze[0], -osc.Gaze[2]);
             _gy = MathF.Atan2(osc.Gaze[1], -osc.Gaze[2]);
@@ -308,8 +234,7 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
         var eye = UnifiedTracking.Data.Eye;
         eye.Left.Gaze.x = _gx;  eye.Left.Gaze.y = _gy;
         eye.Right.Gaze.x = _gx; eye.Right.Gaze.y = _gy;
-        float open = 1f - _closed;
-        eye.Left.Openness = open; eye.Right.Openness = open;
+        eye.Left.Openness = mol; eye.Right.Openness = mor;
         eye.Left.PupilDiameter_MM = 5f; eye.Right.PupilDiameter_MM = 5f;
         eye._maxDilation = 10; eye._minDilation = 0;
     }
@@ -338,9 +263,28 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
         FileLog(s switch
         {
             "frameeyeosc" => "eye data: frameeyeosc (per-eye gaze and eyelids)",
-            "steamlink" => "eye data: Steam Link fallback (gaze only, no frameeyeosc data)",
+            "steamlink" => "eye data: Steam Link (no frameeyeosc data)",
             _ => "eye data: none (headset off, or nothing is sending)",
         });
+    }
+
+    /// <summary>Where the eyelids come from: frameeyeosc, steamvr (per eye, sent by SteamVR), guessed, none.</summary>
+    private void SetLids(string s)
+    {
+        if (s == _lids) return;
+        _lids = s;
+        if (s == "steamvr") _lidsSteam.Reset(); else if (s == "frameeyeosc") _lidsFrame.Reset();
+        if (s != "steamvr") _lidsIdentical = 0;
+        if (s == "steamvr") FileLog("eyelids: per eye, from SteamVR");
+        else if (s == "guessed") FileLog("eyelids: guessed from the gaze (SteamVR sends no eyelid values; that needs SteamVR 2.18.2 and SteamOS 0.4.3)");
+    }
+
+    private void NoteLidsIdentical(int state)
+    {
+        if (state == _lidsIdentical) return;
+        _lidsIdentical = state;
+        if (state == 1) FileLog("both eyelids carry the same value: \"Track Dominant Eye Only\" seems to be on in the headset, so winks are not possible");
+        else if (state == 2) FileLog("the eyelids differ per eye (\"Track Dominant Eye Only\" is off)");
     }
 
     /// <summary>Small JSON snapshot (once a second) so the doctor can tell whether data is flowing without a trace.</summary>
@@ -358,6 +302,8 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
             ["frameAgeMs"] = _frame == null ? -1 : Age(now, _frame.LastAnyTicks),
             ["steamLinkListening"] = _osc != null,
             ["steamLinkAgeMs"] = _osc == null ? -1 : Age(now, _osc.LastPacketTicks),
+            ["lids"] = _lids,
+            ["dominantEyeOnly"] = _lids != "steamvr" || _lidsIdentical == 0 ? null : _lidsIdentical == 1,
             ["trace"] = _cfg.Trace,
             ["config"] = _cfgPath,
             ["startError"] = _startError,

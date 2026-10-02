@@ -45,7 +45,14 @@ if ($vrcftRunning -and $moduleProc) {
     if ($st.configError) { Warn "$($st.configError)" "Your settings file has an error, so the previous settings are still used." "fix the file (menu 6 opens its folder) or restore steamframe-config.json.bak" }
     switch ($st.source) {
       "frameeyeosc" { Write-Step ok "eye data from the headset (per-eye gaze and eyelids), $($st.frameAgeMs) ms old" }
-      "steamlink"   { Warn "only the Steam Link fallback is sending: gaze works, eyelids are guessed" "Only the Steam Link fallback is working. Eyelids are guessed. The headset part is not sending." "on the headset: systemctl --user status frameeyeosc  (or run setup with -Headset)" }
+      "steamlink"   {
+        if ($st.lids -eq "steamvr") {
+          Write-Step ok "eye data from SteamVR (per-eye eyelids, one gaze direction for both eyes), $($st.steamLinkAgeMs) ms old"
+          if ($st.dominantEyeOnly -eq $true) { Warn "both eyelids always carry the same value: 'Track Dominant Eye Only' is on in the headset, so winks are not possible" "Track Dominant Eye Only is on in the headset, so winks do not work. Turn it off in V R settings, General." "in the headset: VR Settings > General > Track Dominant Eye Only (shown with advanced settings)" }
+        } else {
+          Warn "only the Steam Link gaze is arriving: eyelids are guessed" "Only the gaze is arriving. Eyelids are guessed. Update Steam V R and the headset, or set up the headset part." "update SteamVR to 2.18.2+ and SteamOS to 0.4.3+ (both beta at the time of writing), or on the headset: systemctl --user status frameeyeosc  (or run setup with -Headset)"
+        }
+      }
       default       { Warn "no eye data at all right now" "No eye data right now. Put the headset on and check Steam Link is connected." "wear the headset / connect Steam Link; on the headset check: systemctl --user status frameeyeosc" }
     }
     Write-Step info ("module {0}; frameeyeosc port {1}, Steam Link port {2}" -f $st.version,

@@ -7,6 +7,9 @@ namespace SteamFrameVRCFTModule;
 public sealed class ModuleConfig
 {
     public LidConfig Lid { get; set; } = new();
+    /// <summary>Fixed lid levels for the eyelid values SteamVR sends itself (SteamVR 2.18.2+ with SteamOS 0.4.3+), in units of
+    /// 1 - closed. Separate from <see cref="Lid"/>, whose levels are in frameeyeosc units.</summary>
+    public LidLevels SteamVrLid { get; set; } = new();
     public WinkConfig Wink { get; set; } = new();
     public BlinkConfig Blink { get; set; } = new();
     public GazeConfig Gaze { get; set; } = new();
@@ -15,7 +18,16 @@ public sealed class ModuleConfig
     /// <summary>Write 30 ms samples to %TEMP%\steamframe-trace.csv. tools/tune.py turns this on while it records or watches.</summary>
     public bool Trace { get; set; }
 
-    public sealed class LidConfig
+    /// <summary>Fixed calibration per eye (raw tracker units). When both closed and open are set for an eye, adaptation is off for it.</summary>
+    public class LidLevels
+    {
+        public float? LeftClosed { get; set; }
+        public float? LeftOpen { get; set; }
+        public float? RightClosed { get; set; }
+        public float? RightOpen { get; set; }
+    }
+
+    public sealed class LidConfig : LidLevels
     {
         /// <summary>Fraction of the calibrated range at each end that reads as fully closed / fully open.</summary>
         public float Deadband { get; set; } = 0.06f;
@@ -26,11 +38,6 @@ public sealed class ModuleConfig
         public float MinRange { get; set; } = 0.25f;
         /// <summary>Low-pass factor for the envelope tracker (0..1, bigger = less smoothing).</summary>
         public float Smoothing { get; set; } = 0.35f;
-        /// <summary>Fixed calibration per eye (raw tracker units). When both closed and open are set for an eye, adaptation is off for it.</summary>
-        public float? LeftClosed { get; set; }
-        public float? LeftOpen { get; set; }
-        public float? RightClosed { get; set; }
-        public float? RightOpen { get; set; }
     }
 
     public sealed class WinkConfig
@@ -114,7 +121,7 @@ public sealed class ModuleConfig
     /// <summary>Empty string when usable, otherwise the first problem found.</summary>
     public string Validate()
     {
-        if (Lid == null || Wink == null || Blink == null || Gaze == null) return "a section (lid, wink, blink or gaze) is missing or null";
+        if (Lid == null || Wink == null || Blink == null || Gaze == null || SteamVrLid == null) return "a section (lid, steamVrLid, wink, blink or gaze) is missing or null";
         bool Bad(float v, float lo, float hi) => !float.IsFinite(v) || v < lo || v > hi;
         if (Bad(Lid.Deadband, 0f, 0.45f)) return "lid.deadband must be 0..0.45";
         if (Bad(Lid.Smoothing, 0f, 1f) || Bad(Lid.Tau, 0f, 1f)) return "lid.smoothing and lid.tau must be 0..1";
@@ -122,11 +129,12 @@ public sealed class ModuleConfig
         // the adaptive ceiling is at least max(minCeil, floor + minRange) and at most 1, with floor up to maxFloor
         if (Lid.MaxFloor + Lid.MinRange > 1f) return "lid.maxFloor + lid.minRange must not exceed 1";
         if (Lid.MinCeil <= 0f || Lid.MinCeil > 1f) return "lid.minCeil must be above 0 and at most 1";
-        foreach (var (c, o, eye) in new[] { (Lid.LeftClosed, Lid.LeftOpen, "left"), (Lid.RightClosed, Lid.RightOpen, "right") })
+        foreach (var (c, o, eye) in new[] { (Lid.LeftClosed, Lid.LeftOpen, "lid.left"), (Lid.RightClosed, Lid.RightOpen, "lid.right"),
+                     (SteamVrLid.LeftClosed, SteamVrLid.LeftOpen, "steamVrLid.left"), (SteamVrLid.RightClosed, SteamVrLid.RightOpen, "steamVrLid.right") })
         {
-            if (c is float fc && Bad(fc, 0f, 1f)) return $"lid.{eye}Closed must be 0..1";
-            if (o is float fo && Bad(fo, 0f, 1f)) return $"lid.{eye}Open must be 0..1";
-            if (c is float a && o is float b && b - a < 0.05f) return $"lid.{eye}Open must be above lid.{eye}Closed";
+            if (c is float fc && Bad(fc, 0f, 1f)) return $"{eye}Closed must be 0..1";
+            if (o is float fo && Bad(fo, 0f, 1f)) return $"{eye}Open must be 0..1";
+            if (c is float a && o is float b && b - a < 0.05f) return $"{eye}Open must be above {eye}Closed";
         }
         if (Bad(Wink.Threshold, 0f, 1f) || Bad(Wink.Range, 0.01f, 2f) || Bad(Wink.Strength, 0f, 1f)) return "wink.threshold/range/strength out of range";
         if (Bad(Wink.AssistOpen, 0f, 1f) || Bad(Wink.AssistClosed, 0f, 1f) || Bad(Wink.AssistMin, 0f, 1f)) return "wink.assist* levels must be 0..1";

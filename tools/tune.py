@@ -239,7 +239,7 @@ class Tracing:
 
 
 def wait_for_samples(timeout=4.0):
-    """True once the trace grows, i.e. frameeyeosc data is reaching the module with tracing on."""
+    """True once the trace grows, i.e. per-eye eyelid data is reaching the module with tracing on."""
     t_end = time.time() + timeout
     size0 = os.path.getsize(TRACE) if os.path.exists(TRACE) else 0
     while time.time() < t_end:
@@ -257,13 +257,21 @@ def speak_wait(text):
         pass
 
 
+LID_SOURCE = {"FRAME": "frameeyeosc", "SLINK": "SteamVR"}
+TRACE_TAG = "FRAME"    # which rows the last read_trace() used
+
+
 def read_trace(path):
-    """FRAME rows: time,FRAME,lx,ly,rx,ry,rawL,rawR,outL,outR,... -> (time, rawL, rawR, outL, outR, lx, ly, rx, ry)"""
-    rows, bad = [], 0
+    """Rows: time,TAG,lx,ly,rx,ry,rawL,rawR,outL,outR,... -> (time, rawL, rawR, outL, outR, lx, ly, rx, ry).
+    TAG is FRAME (frameeyeosc) or SLINK (eyelids sent by SteamVR, raw = 1 - closed, one gaze for both eyes). A session
+    is analysed from one source only: the one with more rows; TRACE_TAG says which."""
+    global TRACE_TAG
+    by_tag, bad = {"FRAME": [], "SLINK": []}, 0
     with open(path, newline="", encoding="utf-8", errors="replace") as f:
         for p in csv.reader(f):
-            if len(p) < 2 or p[1] != "FRAME":
+            if len(p) < 2 or p[1] not in by_tag:
                 continue
+            rows = by_tag[p[1]]
             if len(p) not in (12, 14):       # e.g. numbers written with a decimal comma split into extra columns
                 bad += 1
                 continue
@@ -274,7 +282,8 @@ def read_trace(path):
                 bad += 1
     if bad:
         print(f"warning: skipped {bad} malformed trace lines in {path}")
-    return rows
+    TRACE_TAG = "SLINK" if len(by_tag["SLINK"]) > len(by_tag["FRAME"]) else "FRAME"
+    return by_tag[TRACE_TAG]
 
 
 def pct(v, p):
@@ -331,9 +340,10 @@ def ready_or_exit():
     if age > 5000:
         msg = ("VRCFaceTracking is not running, or the Steam Frame module is not active. Start VRCFaceTracking from Steam.",
                "VRCFaceTracking / the module is not running (no fresh status). Start VRCFaceTracking from Steam, then run the status check.")
-    elif stt.get("source") != "frameeyeosc":
-        msg = ("No eyelid data from the headset. Put the headset on, and check the headset part with the status check.",
-               f"No frameeyeosc data (source: {stt.get('source')}). Wear the headset; run scripts\\doctor.ps1 if it persists.")
+    elif stt.get("source") != "frameeyeosc" and stt.get("lids") != "steamvr":
+        msg = ("No eyelid data from the headset. Put the headset on, and run the status check.",
+               f"No per-eye eyelid data (source: {stt.get('source')}, eyelids: {stt.get('lids')}). Wear the headset; "
+               "run scripts\\doctor.ps1 if it persists.")
     if msg:
         speak_wait(msg[0])
         sys.exit(msg[1])
@@ -345,7 +355,7 @@ def cmd_record(a):
     with Tracing():
         if not wait_for_samples():
             speak_wait("No eye data from the headset, so calibration cannot start. Run the status check.")
-            sys.exit("No headset eye data is reaching the module (frameeyeosc not sending, or VRCFaceTracking not running).\n"
+            sys.exit("No per-eye eyelid data is reaching the module (headset off, or VRCFaceTracking not running).\n"
                      "Run the status check: powershell -ExecutionPolicy Bypass -File scripts\\doctor.ps1")
         return _record(a)
 
@@ -596,7 +606,8 @@ def cmd_analyze(a):
             speak_wait("Not enough data in that recording. Please calibrate again.")
             sys.exit(f"Not enough '{n}' samples ({len(g.get(n, []))}). Redo the recording.")
     dt = st.median(b[0] - a_[0] for a_, b in zip(rows, rows[1:]) if 0 < b[0] - a_[0] < 0.5)
-    print(f"Session {d}: {len(rows)} samples, median interval {dt * 1000:.0f} ms\n")
+    steamvr = TRACE_TAG == "SLINK"
+    print(f"Session {d}: {len(rows)} samples, median interval {dt * 1000:.0f} ms, eyelids from {LID_SOURCE[TRACE_TAG]}\n")
 
     L = lambda seg: [x[1] for x in seg]
     R = lambda seg: [x[2] for x in seg]
@@ -621,7 +632,8 @@ def cmd_analyze(a):
 
     nL = lambda v: (v - cal["leftClosed"]) / (cal["leftOpen"] - cal["leftClosed"])
     nR = lambda v: (v - cal["rightClosed"]) / (cal["rightOpen"] - cal["rightClosed"])
-    rec = {"lid": {k: round(v, 3) for k, v in cal.items()}, "wink": {}, "blink": {}}
+    # the two sources have their own raw units, so their levels are stored separately
+    rec = {"steamVrLid" if steamvr else "lid": {k: round(v, 3) for k, v in cal.items()}, "wink": {}, "blink": {}}
 
     print("\nWinks (normalised: 0 = closed, 1 = open):")
     sep = []
@@ -695,11 +707,12 @@ def cmd_analyze(a):
             # Glitch signature: the "open" eye is pinned at its raw ceiling while the other lid is closed.
             SAT = 0.985
             sat = [e for e in asym if sum(1 for l, r, rl, rr in e if (rr >= SAT and l < 0.35) or (rl >= SAT and r < 0.35)) >= len(e) / 2]
-            plain = [e for e in asym if e not in sat]
-            print(f"\nBlinks: {len(ev)} detected; {len(asym)} lopsided ({len(sat)} pinned at the ceiling, {len(plain)} plain)")
+            # the module has no ceiling rule for SteamVR's eyelids, so there every lopsided blink needs the time limit
+            plain = asym if steamvr else [e for e in asym if e not in sat]
+            print(f"\nBlinks: {len(ev)} detected; {len(asym)} lopsided ({len(sat)} pinned at the ceiling, {len(asym) - len(sat)} plain)")
             if asym:
                 print(f"  lopsided duration: median {st.median(len(e) * dt * 1000 for e in asym):.0f} ms, max {max(len(e) * dt * 1000 for e in asym):.0f} ms")
-            if len(sat) >= max(2, len(asym) / 2):
+            if len(sat) >= max(2, len(asym) / 2) and not steamvr:
                 rec["blink"]["saturatedRaw"] = SAT
                 print(f"  -> blink.saturatedRaw {SAT}: those close both eyes for as long as they last, however long")
             durs = sorted(len(e) * dt * 1000 for e in plain)
@@ -710,7 +723,8 @@ def cmd_analyze(a):
                 print(f"  both-eye blinks: {len(sym)}, median duration {st.median(len(e) * dt * 1000 for e in sym):.0f} ms")
             rec["blink"]["holdMs"] = int(max(60, min(120, st.median(len(e) for e in ev) * dt * 1000 * 0.6 + 40)))   # long holds delay wink release
             if len(asym) > len(ev) / 2:
-                warn.append("most blinks are reported lopsided by the tracker; blink.saturatedRaw / coupleMs make them close both eyes")
+                warn.append("most blinks are reported lopsided by the tracker; "
+                            + ("blink.coupleMs makes" if steamvr else "blink.saturatedRaw / coupleMs make") + " them close both eyes")
         else:
             print("\nBlinks: none detected in the blink step")
 
@@ -761,7 +775,7 @@ def _watch():
             with open(TRACE, "rb") as f:
                 f.seek(max(0, os.path.getsize(TRACE) - 600))
                 lines = f.read().decode("utf-8", "replace").splitlines()
-            last = next((l for l in reversed(lines) if ",FRAME," in l), None)
+            last = next((l for l in reversed(lines) if ",FRAME," in l or ",SLINK," in l), None)
             if last:
                 p = last.split(",")
                 rl, rr, ol, orr = (float(p[i]) for i in (6, 7, 8, 9))

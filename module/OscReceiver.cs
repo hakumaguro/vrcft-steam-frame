@@ -18,6 +18,16 @@ public sealed class OscReceiver : IDisposable
     public long LastAnyTicks;                        // last time any OSC message arrived
     public long LastPacketTicks;                     // Environment.TickCount64 of last eye packet
     public long Packets;
+    // Per-eye closedness (0 open .. 1 closed), sent by SteamVR 2.18.2+ with SteamOS 0.4.3+.
+    public volatile float ClosedL, ClosedR;
+    public long LastLidTicks;                        // 0 until both eyes were received
+    /// <summary>1 when both eyelids always carry the same value (the headset's "Track Dominant Eye Only" is on), 2 when they
+    /// differ, 0 while unknown. Judged on the last <see cref="PairWindow"/> frames in which an eye was partly closed.</summary>
+    public volatile int LidsIdentical;
+    private const int PairWindow = 200;
+    private readonly bool[] _pairEqual = new bool[PairWindow];
+    private int _pairNext, _pairCount, _pairEqualSum;
+    private bool _haveClosedL;
     public readonly System.Collections.Concurrent.ConcurrentDictionary<string, float[]> Latest = new();
 
     public OscReceiver(ILogger log, int port, IPAddress? bind = null)
@@ -103,7 +113,31 @@ public sealed class OscReceiver : IDisposable
             case "/tracking/eye/EyesClosedAmount" when vals.Count >= 1:
                 EyesClosed = Math.Clamp(vals[0], 0f, 1f);
                 break;
+            case "/sl/xrfb/facew/EyesClosedL" when vals.Count >= 1:
+                ClosedL = Math.Clamp(vals[0], 0f, 1f);
+                _haveClosedL = true;
+                break;
+            case "/sl/xrfb/facew/EyesClosedR" when vals.Count >= 1:   // sent right after the left eye of the same frame
+                ClosedR = Math.Clamp(vals[0], 0f, 1f);
+                if (!_haveClosedL) break;
+                LastLidTicks = Environment.TickCount64;
+                NotePair(ClosedL, ClosedR);
+                break;
         }
+    }
+
+    private void NotePair(float l, float r)
+    {
+        static bool Partly(float v) => v > 0.05f && v < 0.95f;
+        if (!Partly(l) && !Partly(r)) return;        // fully open or fully closed frames are equal in any case
+        bool eq = l == r;
+        if (_pairCount == PairWindow) { if (_pairEqual[_pairNext]) _pairEqualSum--; } else _pairCount++;
+        _pairEqual[_pairNext] = eq;
+        if (eq) _pairEqualSum++;
+        _pairNext = (_pairNext + 1) % PairWindow;
+        if (_pairCount < PairWindow) return;
+        if (_pairEqualSum >= PairWindow * 9 / 10) LidsIdentical = 1;
+        else if (_pairEqualSum <= PairWindow / 2) LidsIdentical = 2;
     }
 
     public void Dispose()
