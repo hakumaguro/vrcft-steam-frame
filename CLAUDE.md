@@ -43,6 +43,101 @@ lagged their beeps and piled up; the user could not hear them (2026-09-28). `Spe
 the lead-in, 7-10 ms per prompt, a new prompt cancels a late one). Not caused by 0.2.2: the prompt code was unchanged since v0.2.1.
 Not done yet: offline replay tests for the eyelid pipeline (the replays in this history were ad-hoc scripts).
 
+## Eyelids from SteamVR (2026-10-02, uncommitted, deployed on the author's PC as a 0.2.3 dev build)
+
+- `module/LidPipeline.cs`: the lid pipeline moved out of the module class (no VRCFT types), one instance per source. Checked against
+  the committed code on 10 old sessions: identical output on every row, with fixed and with adaptive levels.
+- Steam Link path: when `/sl/xrfb/facew/EyesClosedL/R` are fresh, raw = 1 - closed goes through the same pipeline with its own
+  levels (`steamVrLid` in the config; without them closed = 0 and only the open level adapts) and **without** the glitch rule
+  (`blink.saturatedRaw`): on this scale the open eye reads 1.0 during normal winks (seen for 170-240 ms in wink steps). Without the
+  lid values (older SteamVR) the old guessed blink is used. Gaze stays one direction for both eyes.
+- `/sl/eyeTrackedGazePoint` is a point at the distance the eyes converge (length 25 when parallel, 0.2-0.3 with both eyes
+  closed, but also below 1.5 for up to 100 % of a fixation with open eyes when the estimates converge). So on the per-eye path the
+  gaze is held only while both mapped lids are below 0.5, not by the vector length (a first version did both and would have frozen
+  the gaze; found by replaying round 1's gaze steps, `replay_gaze.py`). The guessed-blink path still uses the length.
+- Status file: `lids` = frameeyeosc / steamvr / guessed / none, `dominantEyeOnly` = true / false / null. Detection is in
+  `OscReceiver` (L and R of the same frame, last 200 frames with a partly closed eye: >= 90 % equal -> on, <= 50 % -> off).
+  The doctor reports `lids=steamvr` as OK and warns when Track Dominant Eye Only is on.
+- Trace rows from this path have the tag `SLINK` (same columns as `FRAME`). `tune.py` reads whichever tag has more rows, writes the
+  levels to `steamVrLid` for SLINK sessions and does not recommend `saturatedRaw` there.
+- Tested by sending the recorded OSC (`sessions/20261002-dominant-eye/osc.csv`) to the installed module on 9015: `lids=steamvr`,
+  `dominantEyeOnly` false -> true -> false across the three rounds, outputs equal to the offline replay. Left wink: left only closed
+  59-78 % of the step. Right wink: mostly both half closed (the user's left lid follows), as before. The three settings files were
+  unchanged (hashes). `tune.py analyze --apply` on a session built from that replay wrote `steamVrLid` to a copy of the config.
+- The `wink` and `blink` sections are shared by both sources, so a calibration on SteamVR's lids also retunes the frameeyeosc
+  path. For SLINK sessions `tune.py` counts every lopsided blink for `coupleMs` (the module has no ceiling rule there).
+- Live on the headset the same evening: status `lids=steamvr`, doctor "All good", a spoken check (3 of 3 blinks with both eyes,
+  both closed 100 %, gaze left -13 / right +25 / up +17 / down -19 deg, no freeze while looking at a near finger), then a real
+  `tune.py calibrate` (session `20261002-184358`, applied: `steamVrLid` L 0.00-0.95, R 0.05-0.88, `wink.threshold` 0.144).
+  Left wink OK twice (right eye squints to 0.6-0.75). Right wink: seen once (right 0.0-0.1, left 0.7), not seen once (right
+  stayed at 0.6-0.9). Blinks: 4 of 7 lopsided with the same signature as on frameeyeosc (one lid 0, the other pinned at 1.0, for
+  ~230 ms). Replayed with the applied config: glitch rule off -> one blink shows one eye for 53 ms, the rest are clean (coupleMs
+  180 + holdMs 120 cover them); glitch rule on -> all clean, first left wink 72 % instead of 80 %. Kept off on this path, because
+  SteamVR's scale puts a normally open eye at exactly 1.0 (this user's open median), so with the rule on a wink without a squint
+  would be read as a blink.
+- Pipeline fix found in that live data (both sources): during a left wink the squinting right eye hovered around `blink.asymOpen`
+  (0.60), each dip below it for > 60 ms reset the lopsided timer and the next rise closed both eyes again for coupleMs + holdMs
+  (live: both closed 40 % / 22 % of the two left-wink steps). Now the timer keeps running while the same eye stays closed and the
+  other one is merely between `asymClosed` and `asymOpen`; it restarts when the closed eye changes sides or both were closed.
+  Replays: that session with the same config 17 % / 10 % both closed (the wink onset and one real blink of the open eye), blinks
+  unchanged; 6 old frameeyeosc sessions: nothing worse, right wink shown 46 -> 53 % and 56 -> 75 % in two of them, 0-39 rows
+  differ per session. Live afterwards (`live_check.py winks`): left wink 61 %, right wink 57 % of the hold with the other eye open,
+  3 of 3 blinks with both eyes. Right winks are still hit and miss: in 2 of 5 tries today the tracker itself kept the right lid at
+  0.6-0.9, and the module cannot recover those.
+- Gaze on this path, one session (`20261002-184358`): 4.2 deg from the dot, 1.1 with an offset + gain correction fitted on one pass
+  and tested on the other (mostly vertical: +4.0 deg, gain 1.16). The "no module-side gaze correction" conclusion of 2026-10-01
+  was for frameeyeosc; repeat the session before building one here.
+- The user checked it in VRChat on 2026-10-02: works.
+- frameeyeosc and shm version 5 (checked 2026-10-02): upstream konsti219 has no version 5 support (last commit 2026-10-01, lid
+  remap). The sasaken1102r fork has it since v0.6.1 and describes the layout the same way (5 bytes at 0x152, record at 0x157, file
+  0x4f21f). A 30-line patch over the pinned revision (`sessions/20261002-frameeyeosc-v5/frameeyeosc-shm-v5.patch`: record offset
+  chosen by version, 4 and 5 accepted) was built in a copy on the headset (4.6 s, the installed checkout and service untouched)
+  and run for 5 s against a local port: 90 samples/s, per-eye X, lids 0..1, eye service fine afterwards.
+- Decision (user, 2026-10-02): SteamVR's values are the main path from now on (SteamVR may make frameeyeosc unnecessary); the
+  headset part is optional, for per-eye gaze. `headset-setup.sh` now carries the patch (heredoc, `git apply`, idempotent, checkout
+  with `--force` so a later revision change is not blocked by it) and `headset-install.sh` accepts versions 4 and 5. Tested with
+  `FRAMEEYEOSC_NO_BUILD=1 HOME=<tmp>`: fresh, re-run, another revision and back; the patched source equals the one built on the
+  headset. Not run through `setup.ps1 -Headset` on the real headset (the author's headset keeps the unpatched checkout, service
+  disabled). When frameeyeosc sends, the module still prefers it (per-eye gaze, `lid` levels, glitch rule on), so that path needs
+  its own calibration on 0.4.3.
+- No release for now (user, 2026-10-02): this was only used with beta versions on both sides (SteamOS 0.4.3, SteamVR 2.18.2).
+  Latest release stays v0.2.2; revisit when those versions are on the stable channels. The replay tool and the test scripts are in `sessions/20261002-steamvr-lids-dev/`.
+
+## SteamOS 0.4.3 beta + SteamVR beta 2.18.2 (measured 2026-10-02)
+
+- **frameeyeosc at the pinned revision does not start on SteamOS 0.4.3**: `/dev/shm/eye-server.mmap` is ABI version 5 (file 324127
+  bytes, +5). The service loops on "unsupported eye shared-memory version 5; expected 4" and the module runs on the Steam Link fallback.
+  Layout change: 5 new bytes at 0x152 (`00 ff ff ff ff` = Track Dominant Eye Only off, see below), the eye record follows unchanged at 0x157
+  (was 0x152). Upstream konsti219 has no fix yet; the sasaken1102r fork has an open PR (#7) that skips the 5 bytes.
+- Raw openness behaves differently on 0.4.3: both closed reads 0.000 (was L 0.14 / R 0.32), open about 0.85-1.0 (was 0.65-0.75).
+  Fixed lid levels from older calibrations no longer fit.
+- SteamVR 2.18.2 now sends per-eye closedness on the Steam Link OSC port (9015), ~160 Hz, 8-bit steps:
+  `/sl/xrfb/facew/EyesClosedL`, `/sl/xrfb/facew/EyesClosedR` (0 open .. 1 closed; `/avatar/parameters/LeftEyeLid`/`RightEyeLid` carry
+  the same values), `/tracking/eye/EyesClosedAmount` (= min of the two, 100 % of samples), plus `...EyeLidExpandedSqueeze`, `...SqueezeToggle`,
+  `...WidenToggle`. Roughly closed = 1 - raw openness (raw 0.9 -> 0.11, 0.7 -> 0.30, 0.5 -> 0.47, 0 -> 1). Gaze on that port is still
+  one combined direction (LeftEyeX == RightEyeX); per-eye gaze exists only in the shared memory.
+- Winks on port 9015 (setting off, 3 spoken trials, closed L / R): left closed 1.00 / 0.29, 1.00 / 0.33, 1.00 / 0.45. Right closed
+  1.00 / 0.93 (reads as both closed), 0.44 / 0.83, 0.59 / 0.79: separable from both-closed (1.00 / 1.00) in 2 of 3 trials, the
+  left lid drags to about 0.4-0.6.
+- Captures and scripts: `sessions/20261002-os043-steamvr-osc/` (`run_sniff.ps1` closes VRCFT, records 9015 + the headset shm
+  with spoken prompts, restarts VRCFT).
+- **Track Dominant Eye Only**, measured off -> on -> off with the dot (`sessions/20261002-dominant-eye/`, `dom_eye_test.py` +
+  `analyze_dom.py`; one sitting, headset not taken off). The setting is `steamvr.eyeTrackingDominantEyeOnly` in the headset's
+  `~/.config/openvr/config/steamvr.vrsettings` (written at once; key absent = off; `dominantEye` default 1 = right).
+  - The 5 new shm bytes are the setting: off `00 ff ff ff ff`, on `01 01 00 00 00` (u8 flag + i32 dominant eye index, -1 when off).
+  - On: `gaze_direction` of both eyes = the dominant eye's `pre_fusion_gaze` (L-R 0.14 deg, constant). `pre_fusion_gaze` of the
+    other eye and the raw `openness` of both eyes are still written per eye (left closed: L 0.00, R 0.63).
+  - On: SteamVR's OSC lids become identical (`EyesClosedL == EyesClosedR` in 100 % of samples, both follow the dominant eye), so
+    winks cannot come from port 9015 while it is on. Off: equal in 0 % of partly closed samples.
+  - Gaze error vs the dot: off 5.7, on 3.2, off 2.4 deg. The two off rounds differ more than on vs off, because the right eye's
+    estimate shifted between round 1 and 2 (e.g. dot +20: 16.3 -> 21.0 deg) and stayed. No accuracy gain shown: on equals the
+    dominant eye alone (3.0-3.2 in rounds 2-3, 6.0 in round 1), off round 3 fused both eyes to 2.4. Jitter 0.35-0.6 deg either way.
+  - With the setting off the eye service already fuses: Y is shared. For X the likely rule (about 30 gaze steps, one sitting) is:
+    made parallel when the two estimates diverge, kept per eye when they converge (round 1: up to 4.6 deg apart at dot left, read
+    as crossing; rounds 2-3: L-R 0.1-0.3 deg). The per-eye X differences of 2026-10-01 (OS 0.3.0) are probably the same mechanism.
+- Not re-checked on 0.4.3: the blink glitch rule (`blink.saturatedRaw`) assumes a lid pinned at raw ~1.0 is abnormal, but open eyes
+  now read exactly 1.0 often. Recalibrate and replay before trusting winks through frameeyeosc on 0.4.3.
+
 ## Gaze check with a dot in the headset (2026-10-01, uncommitted; works on the Frame through Steam Link)
 
 - First real run (session `20261001-182041`, user confirmed the dot is visible at all five positions): error now 2.7 deg, with a per-eye
@@ -90,7 +185,8 @@ one-click entry points (`Start Here.cmd`), and short answers. They test in VRCha
 ## Data flow
 
 `Steam Frame eye service -> /dev/shm/eye-server.mmap -> frameeyeosc (on headset) -> OSC UDP :9020 -> module -> VRCFT -> VRChat :9000`.
-Fallback when frameeyeosc is silent for 500 ms: Steam Link driver OSC on `127.0.0.1:9015` (gaze only, heuristic blink).
+When frameeyeosc is silent for 500 ms: Steam Link driver OSC on `127.0.0.1:9015` (one gaze for both eyes; per-eye lids from
+SteamVR 2.18.2+ with SteamOS 0.4.3+, otherwise a heuristic blink).
 Either port may fail to open; the module only refuses to start if both do (reason in `startError`).
 frameeyeosc sends `/avatar/parameters/FT/v2/{EyeLeftX,EyeLeftY,EyeRightX,EyeRightY,EyeLidLeft,EyeLidRight,EyeX,EyeY}`
 (+-1 == +-45 degrees, lids 0 = closed, 1 = open) and `/avatar/parameters/FT/EyeTrackingActive`.
@@ -98,11 +194,12 @@ frameeyeosc sends `/avatar/parameters/FT/v2/{EyeLeftX,EyeLeftY,EyeRightX,EyeRigh
 ## Facts established by measurement (trust these, re-verify only if hardware/software changed)
 
 - Steam Link OSC eyelid (`/tracking/eye/EyesClosedAmount`) is always 0 and left == right (mirrored). Real per-eye lids exist only via frameeyeosc.
+  (True before SteamOS 0.4.3 / SteamVR 2.18.2; see the 0.4.3 section above.)
 - Steam Link driver settings (`driver_vrlink` in `Steam\config\steamvr.vrsettings`): `OSCOutPort` 9000 = direct to VRChat, 9015 = alt (for the
   module); `shareEyeTrackingData` must be true. Edit only with SteamVR closed (it rewrites the file on exit). `setup.ps1` does this.
 - VRCFT outputs `EyeLid = openness * 0.75` (0.75 = normal open). VRCFT only sends a parameter when it changes, and sends OSC inside bundles.
 - The module -> VRCFT chain keeps the eyes independent (synthetic sweep: L closed/R open -> `EyeLidLeft 0, EyeLidRight 0.75`, and reverse).
-- Tracker levels differ per eye: closed about L 0.14 / R 0.32, open about L 0.65 / R 0.75 (calibrations 2026-09-26).
+- Tracker levels differ per eye: closed about L 0.14 / R 0.32, open about L 0.65 / R 0.75 (calibrations 2026-09-26; before SteamOS 0.4.3).
 - Many blinks are reported lopsided: one lid ~0 while the other is pinned at raw ~1.0, up to ~350 ms. Real winks keep the open eye ~0.7-0.85.
 - Closing one eye tightens the other: during a right wink the left lid reads ~0.23-0.45 (vs ~0.14 when both are closed).
 - The Frame can reach the PC over two paths: its own Wi-Fi AP (PC "Wi-Fi 2", 10.35.78.x) or the home network. Which one Steam Link
@@ -113,7 +210,7 @@ frameeyeosc sends `/avatar/parameters/FT/v2/{EyeLeftX,EyeLeftY,EyeRightX,EyeRigh
 - Avatars can link the eyelids themselves: Haku_FT_Comfy has a Bool `FT/EyeSync` toggle; with it on, a wink closes both eyes. Check the
   avatar before debugging the module when "a wink closes both eyes".
 
-## Wink/blink pipeline (module `UpdateFromFrame`), in order
+## Wink/blink pipeline (`LidPipeline.Process`), in order
 
 per-eye lid calibration (fixed levels from `tune.py analyze --apply`, else adaptive) -> blink glitch rule (`blink.saturatedRaw`: one lid closed
 while the other is pinned at raw ~1.0 for `glitchMinMs` => both close) -> lopsided-closure timer (`blink.coupleMs`) -> wink assist
