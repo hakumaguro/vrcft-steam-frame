@@ -25,6 +25,30 @@ public sealed class ModuleConfig
         public float? LeftOpen { get; set; }
         public float? RightClosed { get; set; }
         public float? RightOpen { get; set; }
+        /// <summary>Raw level while squinting ("as into bright sun") and while sleepy (half-lidded), per eye, from the tuning
+        /// tool. With the fixed closed/open levels they bend the output curve: squint shows as <see cref="TargetSquint"/>,
+        /// sleepy as <see cref="TargetSleepy"/>, linear in between. Unset = the plain linear map.</summary>
+        public float? LeftSquint { get; set; }
+        public float? LeftSleepy { get; set; }
+        public float? RightSquint { get; set; }
+        public float? RightSleepy { get; set; }
+        /// <summary>Linear level (0..1 of the closed-open range, both eyes) shown as <see cref="TargetSleepy"/>. Set by hand
+        /// while looking in a mirror; overrides the raw sleepy levels and survives a new calibration of closed/open.</summary>
+        public float? SleepyLevel { get; set; }
+        public float TargetSquint { get; set; } = 0.30f;
+        public float TargetSleepy { get; set; } = 0.55f;
+        /// <summary>Wink sharpening only while the lower eye's (linear) level is below this, so a one-eye squint is shown as
+        /// it is instead of being pushed into a wink. Unset = always (the old behaviour).</summary>
+        public float? SharpenBelow { get; set; }
+        /// <summary>A lopsided closure stays the same closure while the closed eye is below blink.asymClosed + this, so a
+        /// one-eye squint hovering at the threshold does not close both eyes again each time it crosses it. 0 = off.</summary>
+        public float AsymHysteresis { get; set; }
+        /// <summary>One Euro filter on each eye's linear level: steady while a lid is held, little lag when it moves fast.</summary>
+        public bool Filter { get; set; }
+        /// <summary>Cutoff (Hz) while the lid is still; lower = steadier.</summary>
+        public float FilterMinCutoff { get; set; } = 1.5f;
+        /// <summary>How fast the cutoff rises with lid speed (per unit/s); higher = less lag in blinks.</summary>
+        public float FilterBeta { get; set; } = 3f;
     }
 
     public sealed class LidConfig : LidLevels
@@ -135,6 +159,24 @@ public sealed class ModuleConfig
             if (c is float fc && Bad(fc, 0f, 1f)) return $"{eye}Closed must be 0..1";
             if (o is float fo && Bad(fo, 0f, 1f)) return $"{eye}Open must be 0..1";
             if (c is float a && o is float b && b - a < 0.05f) return $"{eye}Open must be above {eye}Closed";
+        }
+        foreach (var (lv, name) in new[] { ((LidLevels)Lid, "lid"), (SteamVrLid, "steamVrLid") })
+        {
+            foreach (var (c, s, z, o, eye) in new[] { (lv.LeftClosed, lv.LeftSquint, lv.LeftSleepy, lv.LeftOpen, "left"),
+                         (lv.RightClosed, lv.RightSquint, lv.RightSleepy, lv.RightOpen, "right") })
+            {
+                if ((s is float fs && Bad(fs, 0f, 1f)) || (z is float fz && Bad(fz, 0f, 1f))) return $"{name}.{eye}Squint/{eye}Sleepy must be 0..1";
+                // closed < squint < sleepy < open, for the levels that are set
+                var known = new[] { c, s, z, o }.Where(v => v.HasValue).Select(v => v!.Value).ToList();
+                for (int i = 1; i < known.Count; i++)
+                    if (known[i] <= known[i - 1]) return $"{name}.{eye}: closed < squint < sleepy < open is required";
+            }
+            if (Bad(lv.TargetSquint, 0.01f, 0.99f) || Bad(lv.TargetSleepy, 0.01f, 0.99f) || lv.TargetSquint >= lv.TargetSleepy)
+                return $"{name}.targetSquint and targetSleepy must be 0.01..0.99, squint below sleepy";
+            if (lv.SleepyLevel is float sl && Bad(sl, 0.01f, 0.99f)) return $"{name}.sleepyLevel must be 0.01..0.99";
+            if (lv.SharpenBelow is float sb && Bad(sb, 0f, 1f)) return $"{name}.sharpenBelow must be 0..1";
+            if (Bad(lv.AsymHysteresis, 0f, 0.5f)) return $"{name}.asymHysteresis must be 0..0.5";
+            if (Bad(lv.FilterMinCutoff, 0.01f, 100f) || Bad(lv.FilterBeta, 0f, 1000f)) return $"{name}.filterMinCutoff (0.01..100) or filterBeta (0..1000) out of range";
         }
         if (Bad(Wink.Threshold, 0f, 1f) || Bad(Wink.Range, 0.01f, 2f) || Bad(Wink.Strength, 0f, 1f)) return "wink.threshold/range/strength out of range";
         if (Bad(Wink.AssistOpen, 0f, 1f) || Bad(Wink.AssistClosed, 0f, 1f) || Bad(Wink.AssistMin, 0f, 1f)) return "wink.assist* levels must be 0..1";

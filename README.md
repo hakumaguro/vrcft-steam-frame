@@ -61,7 +61,7 @@ You need: **VRCFaceTracking** (from Steam), **SteamVR + Steam Link** with the Fr
    stars); that is normal for SSH, the keys are still being read. Then it prints `[ok   ] SSH login works` and carries on.
    If you see `Permission denied, please try again.` the password was wrong (you get three tries; run menu 2 again to
    restart). If you never set a password on the headset, set one first with `passwd` in a terminal on the headset.
-4. Put the headset on and choose **4** to calibrate. A voice guides you (about 90 seconds) and tells you the result.
+4. Put the headset on and choose **4** to calibrate. A voice guides you (about 70 seconds) and tells you the result.
 
 Something not working? Choose **3**: it checks every part and says what is wrong and how to fix it.
 
@@ -183,7 +183,7 @@ Logs (PC): `%TEMP%\steamframe-module.log` (only changes are logged, capped at 1 
 | 1 Set up / update | `scripts\setup.ps1`: finds VRCFaceTracking in any Steam library, installs or updates the module (your calibration is kept), moves the stock SteamLink module aside, sets VRCFT's output to VRChat's port 9000, sets Steam Link to share eye data on port 9015 (only while SteamVR is closed, with a backup), checks the firewall rule (offers an admin prompt), restarts VRCFaceTracking. `-DryRun` shows what would change. |
 | 2 Headset | `setup.ps1 -Headset user@host`: SSH key (password once), builds [frameeyeosc](https://github.com/konsti219/frameeyeosc) on the headset (a pinned revision plus a patch for SteamOS 0.4.3's eye-data format; Rust in `~/.cargo`, nothing outside your home folder), installs an auto-start service that sends to the PC address the headset sees. |
 | 3 Status | `scripts\doctor.ps1`: checks every part and speaks a summary. |
-| 4 Calibrate | `tools\tune.py calibrate`: spoken prompts (open, close, winks, blinks), then measures your eyes and applies the result. While SteamVR runs it also shows a dot in the headset to look at, and reports how many degrees your gaze is off (a report only; nothing is corrected yet). |
+| 4 Calibrate | `tools\tune.py calibrate`: spoken prompts (open, close, winks, blinks), then measures your eyes and applies the result. A small panel in the middle of the view shows the raw left/right eyelid values while it records (`--no-meter` turns it off; `tune.py meter` shows only the panel). With `--gaze` it also shows a dot in the headset to look at, and reports how many degrees your gaze is off (a report only; nothing is corrected yet). |
 | 5 Live view | raw tracker vs output eyelids, updated live. |
 | 7 Uninstall | removes the module (calibration saved and restored on reinstall) and restores the stock SteamLink module. |
 
@@ -222,6 +222,10 @@ Calibration (menu 4) writes the per-eye levels and blink/wink settings for you; 
 |---|---|
 | `lid.leftClosed/leftOpen/rightClosed/rightOpen` | fixed per-eye calibration in raw tracker units (null = adapt automatically) |
 | `steamVrLid.leftClosed/leftOpen/rightClosed/rightOpen` | the same for the eyelid values SteamVR sends itself (units of 1 - closed; null = closed is 0 and the open level adapts) |
+| `steamVrLid.sleepyLevel` | half-closed lids: this level (0..1 of the closed-open range, both eyes) is shown as `targetSleepy` (0.55). Raise it if half-closed eyes look too open on the avatar, lower it if too closed. Not set by calibration (SteamVR's readings of a half-closed eye vary too much between sessions); null = straight line |
+| `steamVrLid.leftSquint/leftSleepy/rightSquint/rightSleepy` | raw level while squinting and with sleepy (half-closed) eyes; they bend the output so those poses show as `targetSquint` (0.30) and `targetSleepy` (0.55), linear in between. null = straight line. SteamVR's eyelids only (calibration writes them) |
+| `steamVrLid.filter` (+ `filterMinCutoff / filterBeta`) | One Euro filter: steadies a held, partly closed lid without slowing blinks. Off by default; calibration turns it on |
+| `steamVrLid.sharpenBelow / asymHysteresis` | wink sharpening only while one eye is below this level, and keep a one-eye squint that hovers near `blink.asymClosed` from closing both eyes again and again. Calibration sets them |
 | `lid.deadband` | fraction of the range at each end that reads fully closed / open |
 | `wink.threshold / range / strength` | amplify left/right asymmetry (0 strength = off) |
 | `wink.assist` (+ `assistOpen / assistClosed / assistMin / assistPersistMs / assistReleaseMs`) | closing one eye tightens the other, so the tracker reports it partly closed during a wink. When one eye is at its floor and the other stays above its own floor for `assistPersistMs`, show the other eye open. Off by default |
@@ -231,9 +235,9 @@ Calibration (menu 4) writes the per-eye levels and blink/wink settings for you; 
 | `gaze.scale / invertX / invertY`, `swapEyes` | gaze scaling and orientation fixes |
 | `trace` | write 30 ms samples to `%TEMP%\steamframe-trace.csv` (the calibration tool turns it on only while it needs it) |
 
-Command line: `python tools/tune.py calibrate | record | analyze [--apply] | watch | show | dot` (`dot` only shows the
-calibration dot at each position, to check that it is visible in the headset). If you cannot see the dot, calibrate with
-`python tools/tune.py calibrate --no-dot`: spoken directions only, as before, without the gaze report.
+Command line: `python tools/tune.py calibrate | record | analyze [--apply] | watch | show | dot`. `calibrate --gaze` adds
+the gaze check (a dot in the headset at 5 positions, +25 s, SteamVR must run); `dot` only shows the dot at each
+position, to check that it is visible in the headset.
 
 ## Known limits
 

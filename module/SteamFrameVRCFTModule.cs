@@ -198,7 +198,7 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
             (mol, mor) = _lidsSteam.Process(ol, or, c, c.SteamVrLid, maxFloor: 0f, glitchRule: false, nowMs);
             // The length of the gaze point is no sign of closed eyes here: it is the distance the eyes converge at, and it
             // is below CollapsedGazeMag for most of the time while looking at something near.
-            holdGaze = mol < 0.5f && mor < 0.5f;
+            holdGaze = _lidsSteam.LinearL < 0.5f && _lidsSteam.LinearR < 0.5f;   // before the squint/sleepy curve
             NoteLidsIdentical(osc.LidsIdentical);
             if (c.Trace && nowMs - _lastTrace >= 30)
             {

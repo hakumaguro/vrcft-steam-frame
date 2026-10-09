@@ -120,6 +120,84 @@ Not done yet: offline replay tests for the eyelid pipeline (the replays in this 
   setup option plus README update instructions), and a doctor hint for updaters. Reason: the old build restart-loops on
   shared-memory version 5, and a working one makes the module prefer frameeyeosc over SteamVR's values. The replay tool and the test scripts are in `sessions/20261002-steamvr-lids-dev/`.
 
+## Squint / sleepy eyelids (2026-10-09, uncommitted, not deployed; SteamVR's eyelids only)
+
+- Goal (user, grilled 2026-10-09): partly closed lids shown at the right level (symptom a), and a one-eye squint not
+  pushed into a wink (symptom d). Openness only, no EyeSquint expression. Agreed design in this order:
+  - `steamVrLid.left/rightSquint/Sleepy` (raw) bend the output through knots at `targetSquint` 0.30 / `targetSleepy` 0.55.
+    The bend is the **last** step (`LidCal.Curve`, after peak hold): every blink/wink rule still sees the linear level it
+    was tuned on. Knots that are not strictly inside (0, 1) and in order after the linear map + deadband are skipped.
+  - `sharpenBelow`: wink sharpening only while the lower eye is below it. `asymHysteresis`: a lopsided closure stays the
+    same closure while the closed eye is below `asymClosed` + this. Without it, a one-eye squint hovering at asymClosed
+    restarted the timer and pulled the open eye down again and again (synthetic test).
+  - `filter` (One Euro, `filterMinCutoff` 1.5 Hz, `filterBeta` 3) on the linear level, before the rules. Without it, peak
+    hold pins a noisy held lid to its noise minimum (synthetic: a 0.30 squint showed as 0.23-0.26).
+  - These settings are per source (in `LidLevels`), all off by default. `tune.py analyze` turns them on for SLINK sessions
+    only. For FRAME sessions it only prints the levels.
+- `tune.py`: protocol + sleepy/squint x2 (3 s each), "open" steps 3 -> 2 s, gaze check (dot) only with `--gaze`
+  (look-around step dropped without it): about 76 s. Point dropped (and said) when the two rounds differ > 0.10 raw, it is
+  < 0.05 from a neighbour, or squint/sleepy read the same. SLINK sessions without these steps write the four levels as null.
+  `sharpenBelow` = midpoint of the wink-closed p75 and the squint's linear level when they are >= 0.10 apart, else null.
+  `levels_problem` mirrors the new `Validate` limits.
+- Checked: 17 old sessions, all settings off: 0 rows differ from the committed pipeline (fixed and adaptive). 9 old
+  sessions analyze identically (SLINK ones gain the four null keys). 6 SLINK sessions with filter + gate 0.2 + hysteresis
+  0.15: blinks unchanged (one one-eye-only blink gone); winks within about 2 %, except a right-wink step where the tracker
+  lowered the LEFT lid (20261002-234454): left-only 4 -> 10 %. Synthetic sessions (`sessions/20261009-squint-dev`,
+  `make_synth.py`): levels recovered, squint 0.29-0.30 / sleepy 0.55 out, both drop rules work. Broken values are rejected
+  by both `Validate` and `tune.py`.
+- Not done: the headset run. Calibrate, then `sessions/20261009-squint-dev/live_check.py squint` (pass: within 0.10 of the
+  target, sd < 0.03, one-eye squint keeps the other eye > 0.8), then `live_check.py winks` (not below 61 / 57 %), then the
+  user checks in the VRChat mirror. Replay tool: `sessions/20261009-squint-dev/replay` (`same`, `steps`, `synth`).
+- First live calibration (session `20261009-215907`, new DLL deployed, old DLL/config kept in
+  `sessions/20261009-squint-dev/`):
+  - SteamVR's lids read a squint as fully closed (L 0.00, R 0.04-0.09), so it cannot be a mid level.
+  - Left sleepy was not repeatable (0.44 / 0.18).
+  - 2 s "open" steps were too short: the user reopens about 1 s after the prompt, and once stayed closed through a whole
+    open step. So the open levels came out at 0.74 / 0.60 (vs 0.898 / 0.787).
+  - Decisions (user): squint step removed, open steps back to 3 s, sleepy 4 s x2 (76 s total); the open levels were set
+    back to 0.898 / 0.787 by hand, with the mid levels null and filter + asymHysteresis left on.
+  - `tune.py` now drops a point whose linear level is outside 0.15-0.90, and a point measured on one eye only.
+  - Second try (`20261009-220525`): sleepy not repeatable again (L 0.00 / 0.15, R 0.14 / 0.44; in round 1 the lids drifted
+    shut, in round 2 L 0.15 vs R 0.45 for one pose), and the user asked how far to close. Decisions (user):
+    - The pose is explained during the open step before it, with a visible cue ("lower your lids until the top of the
+      picture goes dark"). The pose step itself only says "Now. Hold." Total 81 s.
+    - SteamVR's open level is now p50 of the open steps (was p20, pulled down by late reopening). FRAME stays p20; old
+      FRAME analyze output is identical.
+    - If the next try is still not repeatable: no more mid-level measuring. Tune one shared curve live instead, with the
+      user in front of the VRChat mirror saying more / less, and the config edited by hand (hot reload).
+- **Outcome (2026-10-09 evening), what is deployed:**
+  - Third calibration (`224212`): sleepy repeatable, but L 0.64 vs R 0.20. A live check right after read the same pose as
+    L 0.75 / R 0.72, so per-eye points do not carry over between sessions. Winks in that live check: left 76 %, right 72 %
+    (were 61 / 57), blinks 3/3.
+  - Decisions (user): Q25 one shared curve tuned at the mirror; Q26 `steamVrLid.sleepyLevel` (linear, both eyes, overrides
+    the raw points, survives calibration). The user found linear 0.80 -> 0.55 "just right" at the mirror; installed config
+    has `sleepyLevel` 0.8.
+  - Calibration has no sleepy/squint steps any more (68 s). It still writes filter + asymHysteresis 0.15 for SteamVR
+    sessions, and nulls the raw points.
+  - Replay: raw points 0.728/0.740 vs `sleepyLevel` 0.8, max |diff| 0.0008 on 3 sessions.
+  - Side effect of p50 open levels: old SLINK sessions' analyze calls `wink_right` FAIL more often, because the other eye's
+    normalised level drops below 0.60. The label and the spoken text only; the recommended wink values are the same.
+- Eyelid meter (user request, 2026-10-09): `overlay.py` command `meter <l> <r>` shows one head-locked overlay per eye (3x5
+  pixel font, bars red < 0.1 < yellow < 0.5 < green). Together 9 deg wide, in the centre of view (user; was 14 deg below), 2 m.
+  `tune.py` class `Meter` sends the newest trace row's raw values about 10 times a second ("-" when older than 0.5 s). It is on
+  during every recording (`--no-meter`), and `tune.py meter` shows it alone. `Overlay.lock` serialises the meter thread and the
+  dot.
+  - **SteamVR limit:** `SetOverlayRaw` fails with error 23 (RequestFailed) after 200 uploads per process. Destroying and
+    recreating the overlay does not help. The first version re-uploaded 10 times a second and froze about 20 s into the
+    calibration, as the user saw. Now each eye's texture is an atlas of all 102 states, uploaded once; an update only calls
+    SetOverlayTextureBounds (table index 30).
+  - Tested in the headset: 1000 updates, and a silent run of the first 10 protocol steps (`Speaker(volume=0)`): 405 sends,
+    no failure.
+- Gaze hold on this path uses the level before the curve (`LidPipeline.LinearL/R`), so the curve does not change when the
+  gaze freezes. A both-eye squint at linear < 0.5 still freezes it, as before.
+- Prompts: the TTS takes 4.7-4.9 s for the long "as if ..." sentences (measured to a wav), so they were cut to "Sleepy eyes,
+  half closed." / "Squint, like bright sun." (about 2.9 s with padding) in 4 s steps for round 1, and "Sleepy eyes." /
+  "Squint." in 3 s steps for round 2. Total 78 s (103 s with `--gaze`).
+- With the curve on (replay of 4 SLINK sessions with levels 0.35/0.6 and 0.3/0.55), a wink's non-assisted other eye
+  shows lower: it squints in reality (linear 0.74 -> 0.57). So "other eye > 0.6" wink percentages drop (e.g. 56 -> 49 %)
+  for a measurement reason, not because of a regression. Compare winks with the curve off, or agree on a new baseline. The
+  assisted eye shows 0.92 instead of 0.95.
+
 ## SteamOS 0.4.3 beta + SteamVR beta 2.18.2 (measured 2026-10-02)
 
 - **frameeyeosc at the pinned revision does not start on SteamOS 0.4.3**: `/dev/shm/eye-server.mmap` is ABI version 5 (file 324127
@@ -232,7 +310,9 @@ frameeyeosc sends `/avatar/parameters/FT/v2/{EyeLeftX,EyeLeftY,EyeRightX,EyeRigh
 per-eye lid calibration (fixed levels from `tune.py analyze --apply`, else adaptive) -> blink glitch rule (`blink.saturatedRaw`: one lid closed
 while the other is pinned at raw ~1.0 for `glitchMinMs` => both close) -> lopsided-closure timer (`blink.coupleMs`) -> wink assist
 (`wink.assist`, off by default, on in the user's config: one eye at its floor and the other above its floor for `assistPersistMs` => other eye
-shown open) -> wink sharpening -> peak hold (`blink.holdMs`).
+shown open) -> wink sharpening -> peak hold (`blink.holdMs`). Optional, per source (off by default): a One Euro filter right
+after the calibration, a `sharpenBelow` gate on wink sharpening, `asymHysteresis` for the lopsided timer, and the
+squint/sleepy output curve as the very last step.
 A "latch on lopsided start" design was tried and abandoned: a right wink drops both lids almost together, so it never armed, and arming on the
 first frame would turn blinks into winks. Validate new rules by replaying labelled sessions (`sessions/*`) offline before deploying.
 

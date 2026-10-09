@@ -6,14 +6,17 @@
   tune.py analyze [DIR]     analyse a session, print findings and a recommended config
   tune.py analyze [DIR] --apply    ...and write the recommendation into the module's config (hot-reloaded)
   tune.py watch             live view of raw and output eyelid values
+  tune.py meter             the raw left/right eyelid values in the headset (also shown during a recording)
   tune.py show              print the module's current config
   tune.py dot               show the fixation dot in the headset at each calibration position (to check it is visible)
 
 The module writes samples to %TEMP%\\steamframe-trace.csv only while `trace` is on in its config; this tool turns it
 on for as long as it needs it and restores it afterwards.
-While SteamVR runs, a recording shows a dot in the headset (tools/overlay.py) to look at; its known angles let analyze
-report how far off the gaze is. Without the dot (SteamVR not running, or --no-dot) the recording uses spoken
-directions only.
+With --gaze (and SteamVR running) a recording also shows a dot in the headset (tools/overlay.py) to look at; its known
+angles let analyze report how far off the gaze is. Report only, so it is off by default (it adds 25 s).
+How half-closed lids are shown is set by hand (steamVrLid.sleepyLevel / targetSleepy, tuned at the VRChat mirror):
+SteamVR's readings of a sleepy pose were not repeatable enough to calibrate (2026-10-09). analyze still turns
+"sleepy" / "squint" steps of a recording into raw points if a session has them.
 """
 import argparse
 import csv
@@ -37,10 +40,11 @@ SESSIONS = os.path.join(ROOT, "sessions")
 PROTOCOL = [
     ("open", 6, "Keep both eyes open and look straight ahead."),
     ("closed", 4, "Close both eyes."),
-    ("open", 4, "Open."),
+    ("open", 3, "Open."),
     ("wink_left", 4, "Wink your left eye only."),
     ("open", 3, "Open."),
     ("wink_right", 4, "Wink your right eye only."),
+    ("open", 3, "Open."),
     ("open", 3, "Open."),
     ("closed", 4, "Close both eyes."),
     ("open", 3, "Open."),
@@ -48,8 +52,9 @@ PROTOCOL = [
     ("open", 3, "Open."),
     ("wink_right", 4, "Wink your right eye only."),
     ("open", 3, "Open."),
+    ("open", 3, "Open."),
     ("blinks", 12, "Blink normally, about once a second."),
-    ("look", 8, "Look around. Left, right, up, down."),
+    ("look", 8, "Look around. Left, right, up, down."),      # only with --gaze (becomes the dot steps)
     ("open", 2, "Done."),
 ]
 # With the dot in the headset the "look" step becomes fixations at known angles (degrees, +x right, +y up), each
@@ -64,6 +69,10 @@ GAZE_SETTLE = 0.6      # seconds skipped after the dot jumps (reaction time + th
 GAZE_MIN_SAMPLES = 15
 GUARD_START, GUARD_END = 1.3, 0.2
 SPOKEN = []   # short sentences for the spoken result of analyze
+# Squint / sleepy levels (raw, per eye): the two rounds must agree within MID_REPEAT, and each level must be at least
+# MID_GAP from its neighbours (closed < squint < sleepy < open), otherwise that point is not used.
+MID_REPEAT = 0.10
+MID_GAP = 0.05
 MIN_LID_RANGE = 0.15   # raw open level must be at least this far above the closed level, per eye   # seconds skipped at each segment edge (prompt + reaction time)
 
 
@@ -135,8 +144,9 @@ class Overlay:
 
     def __init__(self, enabled=True):
         self.ok, self.why, self.p = False, "", None
+        self.lock = threading.Lock()
         if not enabled:
-            self.why = "turned off with --no-dot"
+            self.why = "the gaze check is off (add --gaze)"
             return
         try:
             self.p = subprocess.Popen([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "overlay.py")],
@@ -158,17 +168,22 @@ class Overlay:
         return box[0] if box else ""
 
     def _send(self, line):
-        if not self.ok:
-            return False
-        try:
-            self.p.stdin.write(line + "\n")
-            self.p.stdin.flush()
-            reply = self._reply()
-        except (OSError, ValueError):
-            reply = ""
-        if reply != "ok":
-            self.ok, self.why = False, reply or "overlay.py stopped answering"
-        return self.ok
+        with self.lock:
+            if not self.ok:
+                return False
+            try:
+                self.p.stdin.write(line + "\n")
+                self.p.stdin.flush()
+                reply = self._reply()
+            except (OSError, ValueError):
+                reply = ""
+            if reply != "ok":
+                self.ok, self.why = False, reply or "overlay.py stopped answering"
+            return self.ok
+
+    def meter(self, left, right):
+        f = lambda v: "-" if v is None else f"{v:.3f}"
+        return self._send(f"meter {f(left)} {f(right)}")
 
     def show(self, x_deg, y_deg):
         return self._send(f"show {x_deg} {y_deg} {DOT_DIST}")
@@ -184,6 +199,42 @@ class Overlay:
             self.p.wait(timeout=5)
         except Exception:
             self.p.kill()
+
+
+def last_trace_lids():
+    """(rawL, rawR) of the newest trace row, or (None, None) when there is none or it is older than 0.5 s."""
+    try:
+        with open(TRACE, "rb") as f:
+            f.seek(max(0, os.path.getsize(TRACE) - 600))
+            lines = f.read().decode("utf-8", "replace").splitlines()
+        last = next((l for l in reversed(lines) if ",FRAME," in l or ",SLINK," in l), None)
+        p = last.split(",") if last else []
+        if len(p) < 8 or abs(tod(stamp()) - tod(p[0])) > 0.5:
+            return None, None
+        return float(p[6]), float(p[7])
+    except (OSError, ValueError):
+        return None, None
+
+
+class Meter:
+    """Shows the raw left/right eyelid values from the module's trace in the headset (overlay.py), ~10 times a second,
+    in a background thread. The trace must be on (Tracing)."""
+
+    def __init__(self, overlay):
+        self.ov, self.stop = overlay, threading.Event()
+        self.t = threading.Thread(target=self._run, daemon=True)
+        if overlay.ok:
+            self.t.start()
+
+    def _run(self):
+        while not self.stop.wait(0.1):
+            if not self.ov.meter(*last_trace_lids()):
+                return
+
+    def close(self):
+        self.stop.set()
+        if self.t.is_alive():
+            self.t.join(1.0)
 
 
 def beep(freq=880, ms=120):
@@ -296,6 +347,35 @@ def pct(v, p):
 STATUS = os.path.join(os.environ.get("TEMP", "."), "steamframe-status.json")
 
 
+def levels_problem(cfg, num):
+    """The module's limits for the squint/sleepy curve, the filter and the wink rules of each lid section (None = fine)."""
+    for sect in ("lid", "steamVrLid"):
+        lv = cfg.get(sect, {})
+        if not isinstance(lv, dict):
+            return f"{sect} is not an object"
+        for eye in ("left", "right"):
+            vals = [lv.get(eye + k) for k in ("Closed", "Squint", "Sleepy", "Open")]
+            if any(v is not None and not num(v, 0.0, 1.0) for v in vals):
+                return f"{sect}.{eye} levels must be numbers from 0 to 1"
+            known = [v for v in vals if v is not None]
+            if any(b <= a for a, b in zip(known, known[1:])):
+                return f"{sect}.{eye}: closed < squint < sleepy < open is required"
+        ts, tz = lv.get("targetSquint", 0.30), lv.get("targetSleepy", 0.55)
+        if not (num(ts, 0.01, 0.99) and num(tz, 0.01, 0.99) and ts < tz):
+            return f"{sect}.targetSquint and targetSleepy must be 0.01 to 0.99, squint below sleepy"
+        if lv.get("sleepyLevel") is not None and not num(lv["sleepyLevel"], 0.01, 0.99):
+            return f"{sect}.sleepyLevel must be a number from 0.01 to 0.99"
+        if lv.get("sharpenBelow") is not None and not num(lv["sharpenBelow"], 0.0, 1.0):
+            return f"{sect}.sharpenBelow must be a number from 0 to 1"
+        if not num(lv.get("asymHysteresis", 0.0), 0.0, 0.5):
+            return f"{sect}.asymHysteresis must be a number from 0 to 0.5"
+        if not (num(lv.get("filterMinCutoff", 1.5), 0.01, 100.0) and num(lv.get("filterBeta", 3.0), 0.0, 1000.0)):
+            return f"{sect}.filterMinCutoff (0.01 to 100) or filterBeta (0 to 1000) is out of range"
+        if not isinstance(lv.get("filter", False), bool):
+            return f"{sect}.filter must be true or false"
+    return None
+
+
 def settings_or_exit():
     """The installed config values analyze depends on, checked with the module's own limits. Exits with a spoken
     message before any calculation (or recording) if the file is unreadable or a value is out of range."""
@@ -322,6 +402,8 @@ def settings_or_exit():
                 problem = f"lid.deadband is {db!r}; it must be a number from 0 to 0.45"
             elif not num(a_closed, 0.0, 1.0):
                 problem = f"wink.assistClosed is {a_closed!r}; it must be a number from 0 to 1"
+            else:
+                problem = levels_problem(cfg, num)
     if problem:
         speak_wait("Your settings file has an error, so calibration cannot run. Nothing was changed. See the screen.")
         sys.exit(f"steamframe-config.json {problem}.\n  {cp}\n"
@@ -365,7 +447,8 @@ def protocol(with_dot):
     steps = []
     for label, secs, text in PROTOCOL:
         if not with_dot:
-            steps.append((label, secs, text, None))
+            if label != "look":              # without the dot the look-around step measures nothing
+                steps.append((label, secs, text, None))
         elif label == "look":
             steps += [("gaze", GAZE_SECS, None if i else "Follow the dot with your eyes.", t) for i, t in enumerate(GAZE_TARGETS)]
         else:
@@ -400,10 +483,12 @@ def _record(a):
     t_lead = time.time()
     voice = Speaker()                        # started once, during the lead-in
     voice.say("Calibration starts soon. Put the headset on and keep your face relaxed.")
-    dot = Overlay(not a.no_dot)
-    steps = protocol(dot.ok)
+    gaze = a.gaze and not a.no_dot
+    dot = Overlay(gaze or not a.no_meter)       # one overlay process for the dot and the eyelid meter
+    steps = protocol(gaze and dot.ok)
+    meter = Meter(dot) if not a.no_meter else None
     total = sum(s[1] for s in steps)
-    if not dot.ok:
+    if a.gaze and not dot.ok:
         print(f"(no dot in the headset: {dot.why}; spoken directions only, so no gaze check)")
     print(f"Session {out}\n{len(steps)} steps, about {total:.0f} s. Put the headset on now; you have {a.lead} s.")
     time.sleep(max(0.0, a.lead - (time.time() - t_lead)))
@@ -411,7 +496,7 @@ def _record(a):
     t_start = time.time()
     try:
         for label, secs, text, target in steps:
-            shown = dot.show(*(target or (0, 0)))        # the dot rests in the centre between the gaze steps
+            shown = gaze and dot.show(*(target or (0, 0)))        # the dot rests in the centre between the gaze steps
             t0 = time.time()
             print(f"  {label:<11} {secs:>4}s  {text or 'dot ' + GAZE_NAMES[target]}")
             beep()
@@ -423,6 +508,8 @@ def _record(a):
         beep(660, 300)
     finally:
         voice.close()
+        if meter:
+            meter.close()
         dot.close()
     time.sleep(0.5)
     with open(os.path.join(out, "labels.csv"), "w", newline="") as f:
@@ -457,6 +544,57 @@ def load_session(d):
             seg = [x for x in rows if s <= x[0] <= e]
             groups.setdefault(r["label"], []).extend(seg)
     return rows, groups
+
+
+def occurrences(d, rows, label):
+    """The steady part of each step with this label, one list per occurrence (in recording order)."""
+    out = []
+    with open(os.path.join(d, "labels.csv"), newline="") as f:
+        for r in csv.DictReader(f):
+            if r["label"] == label:
+                s, e = tod(r["start"]) + GUARD_START, tod(r["end"]) - GUARD_END
+                out.append([x for x in rows if s <= x[0] <= e])
+    return out
+
+
+def mid_levels(d, rows, cal, mapped_of, warn):
+    """Raw squint and sleepy levels per eye, or None for a point that cannot be trusted (missing, the two rounds
+    disagree, out of order or too close to a neighbour). Returns ({'leftSquint': v|None, ...}, notes for speech)."""
+    out, dropped = {}, []
+    for eye, i in (("left", 1), ("right", 2)):
+        lv = {}
+        for name in ("squint", "sleepy"):
+            meds = [st.median(x[i] for x in seg) for seg in occurrences(d, rows, name) if len(seg) >= 10]
+            key = eye + name.capitalize()
+            if len(meds) < 2:
+                lv[name] = None
+                if meds or occurrences(d, rows, name):
+                    dropped.append(f"{eye} {name}: only one usable round")
+            elif max(meds) - min(meds) > MID_REPEAT:
+                lv[name] = None
+                dropped.append(f"{eye} {name}: the two rounds differ ({meds[0]:.2f} / {meds[1]:.2f})")
+            else:
+                lv[name] = sum(meds) / len(meds)
+        lo, hi = cal[eye + "Closed"], cal[eye + "Open"]
+        for name in ("squint", "sleepy"):
+            v = lv[name]
+            # the tracker may read a squint as fully closed (seen on SteamVR's eyelids): a point near either end is not a mid level
+            if v is not None and not (lo + MID_GAP <= v <= hi - MID_GAP and 0.15 <= mapped_of[eye](v) <= 0.90):
+                dropped.append(f"{eye} {name}: {v:.2f} is too close to closed ({lo:.2f}) or open ({hi:.2f})")
+                lv[name] = None
+        if lv["squint"] is not None and lv["sleepy"] is not None and lv["sleepy"] - lv["squint"] < MID_GAP:
+            dropped.append(f"{eye}: squint {lv['squint']:.2f} and sleepy {lv['sleepy']:.2f} read the same or reversed")
+            lv["squint"] = lv["sleepy"] = None
+        for name in ("squint", "sleepy"):
+            out[eye + name.capitalize()] = None if lv[name] is None else round(lv[name], 3)
+    # a point on one eye only would bend that eye alone, so the two eyes would show the same lid differently
+    for name in ("Squint", "Sleepy"):
+        if (out["left" + name] is None) != (out["right" + name] is None):
+            dropped.append(f"{name.lower()}: measured on one eye only, so not used on either")
+            out["left" + name] = out["right" + name] = None
+    for x in dropped:
+        warn.append("not used: " + x)
+    return out, dropped
 
 
 def fixation(seg, blink):
@@ -611,13 +749,15 @@ def cmd_analyze(a):
 
     L = lambda seg: [x[1] for x in seg]
     R = lambda seg: [x[2] for x in seg]
+    # SteamVR's open level is the median: a late reopening after a closed step pulls p20 down by up to 0.2 (2026-10-09)
+    p_open = 0.50 if steamvr else 0.20
     cal = {
-        "leftOpen": pct(L(g["open"]), 0.20), "rightOpen": pct(R(g["open"]), 0.20),
+        "leftOpen": pct(L(g["open"]), p_open), "rightOpen": pct(R(g["open"]), p_open),
         "leftClosed": pct(L(g["closed"]), 0.80), "rightClosed": pct(R(g["closed"]), 0.80),
     }
     print("Raw lid levels (0 = closed, 1 = open):")
-    print(f"  left : open p20 {cal['leftOpen']:.2f} (median {st.median(L(g['open'])):.2f})   closed p80 {cal['leftClosed']:.2f} (median {st.median(L(g['closed'])):.2f})")
-    print(f"  right: open p20 {cal['rightOpen']:.2f} (median {st.median(R(g['open'])):.2f})   closed p80 {cal['rightClosed']:.2f} (median {st.median(R(g['closed'])):.2f})")
+    print(f"  left : open p{round(p_open * 100)} {cal['leftOpen']:.2f} (median {st.median(L(g['open'])):.2f})   closed p80 {cal['leftClosed']:.2f} (median {st.median(L(g['closed'])):.2f})")
+    print(f"  right: open p{round(p_open * 100)} {cal['rightOpen']:.2f} (median {st.median(R(g['open'])):.2f})   closed p80 {cal['rightClosed']:.2f} (median {st.median(R(g['closed'])):.2f})")
     warn = []
     bad = [eye for eye in ("left", "right") if cal[eye + "Open"] - cal[eye + "Closed"] < MIN_LID_RANGE]
     if bad:
@@ -686,6 +826,56 @@ def cmd_analyze(a):
         rec["wink"].update({"assist": True, "assistMin": round(min(0.3, max(0.03, max(mins))), 3)})
         print(f"  the other eye squints during {', '.join(squint)} -> wink.assist on, assistMin {rec['wink']['assistMin']}")
         SPOKEN.append("Wink assist is on, so the open eye stays open while you wink.")
+
+    # Squint / sleepy: per eye, the raw level of each pose becomes a knot of the output curve (SteamVR's eyelids only).
+    if g.get("squint") or g.get("sleepy"):
+        mids, dropped = mid_levels(d, rows, cal, {"left": lambda v: mapped(nL(v)), "right": lambda v: mapped(nR(v))}, warn)
+        lv_now = cfg_now.get("steamVrLid" if steamvr else "lid", {})
+        ts, tz = lv_now.get("targetSquint", 0.30), lv_now.get("targetSleepy", 0.55)
+        print(f"\nSquint / sleepy (raw; in brackets the linear level the blink and wink rules see; shown as {ts} / {tz}):")
+        lin = {}
+        for eye, f in (("left", lambda v: mapped(nL(v))), ("right", lambda v: mapped(nR(v)))):
+            parts = []
+            for name in ("squint", "sleepy"):
+                v = mids[eye + name.capitalize()]
+                segs = [x for seg in occurrences(d, rows, name) for x in seg]
+                med = st.median(x[1 if eye == "left" else 2] for x in segs) if segs else None
+                if med is not None:
+                    lin.setdefault(name, []).append(f(med))
+                parts.append(f"{name} {'-' if med is None else f'{med:.2f} ({f(med):.2f})'}{'' if v is not None else ' not used'}")
+            print(f"  {eye:<5}: " + "   ".join(parts))
+        bl_ = cfg_now.get("blink", {}) if isinstance(cfg_now.get("blink"), dict) else {}
+        print(f"  rules: blink.asymClosed {bl_.get('asymClosed', 0.35)}, blink.asymOpen {bl_.get('asymOpen', 0.60)}, "
+              f"wink.threshold {rec['wink']['threshold']} (difference between the eyes)")
+        if steamvr:
+            rec["steamVrLid"].update(mids)
+            # Wink sharpening only while the lower eye is clearly more closed than a squint, so a one-eye squint stays as it is.
+            wink_low = [mapped(nL(x[1])) for x in g.get("wink_left", [])] + [mapped(nR(x[2])) for x in g.get("wink_right", [])]
+            sq = min(lin.get("squint", [])) if lin.get("squint") else None
+            gate = None
+            if sq is not None and len(wink_low) >= 10:
+                wl = pct(wink_low, 0.75)
+                if sq - wl >= 0.10:
+                    gate = round((wl + sq) / 2, 3)
+                else:
+                    warn.append(f"squint ({sq:.2f}) is too close to a wink ({wl:.2f}): wink sharpening stays on for one-eye squints")
+            rec["steamVrLid"]["sharpenBelow"] = gate
+            print(f"  -> steamVrLid squint/sleepy levels, filter on, asymHysteresis 0.15, sharpenBelow {gate}")
+            used = sum(v is not None for v in mids.values())
+            SPOKEN.append("Sleepy eyes are calibrated." if used else
+                          "Sleepy eyes were not clear, so the eyelids stay linear.")
+        else:
+            print("  (not applied: the curve is only used with SteamVR's eyelids)")
+    elif steamvr:
+        # no such steps (the normal case since 2026-10-09): drop raw points, they belonged to other closed/open levels.
+        # steamVrLid.sleepyLevel (set by hand at the mirror, on the linear scale) is kept.
+        rec["steamVrLid"].update({k: None for k in ("leftSquint", "leftSleepy", "rightSquint", "rightSleepy")})
+    if steamvr:
+        rec["steamVrLid"]["filter"] = True
+        rec["steamVrLid"]["asymHysteresis"] = 0.15
+        sl = cfg_now.get("steamVrLid", {}).get("sleepyLevel") if isinstance(cfg_now.get("steamVrLid"), dict) else None
+        if sl is not None:
+            print(f"\nSleepy eyes: steamVrLid.sleepyLevel {sl} is kept (shown as {cfg_now['steamVrLid'].get('targetSleepy', 0.55)})")
 
     bl = g.get("blinks", [])
     if len(bl) >= 30:
@@ -758,6 +948,26 @@ def bar(v, w=24):
     return "#" * n + "." * (w - n)
 
 
+def cmd_meter(a):
+    """Only the eyelid meter in the headset, until Ctrl+C."""
+    with Tracing():
+        ov = Overlay()
+        if not ov.ok:
+            speak_wait("The meter cannot be shown. Start Steam V R and put the headset on, then try again.")
+            sys.exit(f"The meter cannot be shown: {ov.why}")
+        m = Meter(ov)
+        print("Eyelid meter in the headset (raw values, 1 = open). Ctrl+C to stop.")
+        try:
+            while m.t.is_alive():
+                time.sleep(0.5)
+            print(f"The overlay stopped: {ov.why}")
+        except KeyboardInterrupt:
+            pass
+        finally:
+            m.close()
+            ov.close()
+
+
 def cmd_watch(a):
     with Tracing():
         _watch()
@@ -805,9 +1015,12 @@ def main():
     c = sub.add_parser("calibrate"); c.add_argument("--lead", type=int, default=10, help="seconds to put the headset on"); c.set_defaults(fn=cmd_calibrate)
     r = sub.add_parser("record"); r.add_argument("--lead", type=int, default=8, help="seconds to put the headset on"); r.set_defaults(fn=cmd_record)
     for p in (c, r):
-        p.add_argument("--no-dot", action="store_true", help="spoken directions only: no dot in the headset, no gaze check")
+        p.add_argument("--gaze", action="store_true", help="also check the gaze: look at a dot in the headset at 5 positions (+25 s)")
+        p.add_argument("--no-dot", action="store_true", help=argparse.SUPPRESS)
+        p.add_argument("--no-meter", action="store_true", help="do not show the raw eyelid values in the headset")      # the old opt-out; no dot is the default now
     an = sub.add_parser("analyze"); an.add_argument("dir", nargs="?"); an.add_argument("--apply", action="store_true"); an.add_argument("--speak", action="store_true", help="speak the result"); an.set_defaults(fn=cmd_analyze)
     sub.add_parser("watch").set_defaults(fn=cmd_watch)
+    sub.add_parser("meter", help="show the raw eyelid values in the headset").set_defaults(fn=cmd_meter)
     sub.add_parser("show").set_defaults(fn=cmd_show)
     dt = sub.add_parser("dot"); dt.add_argument("--secs", type=float, default=3, help="seconds per position"); dt.set_defaults(fn=cmd_dot)
     a = ap.parse_args()

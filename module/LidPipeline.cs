@@ -1,7 +1,8 @@
 namespace SteamFrameVRCFTModule;
 
 /// <summary>Turns raw per-eye lid openness (0 closed .. 1 open, tracker units) into the openness shown on the avatar:
-/// per-eye calibration -> blink glitch rule -> lopsided-closure timer -> wink assist -> wink sharpening -> peak hold.
+/// per-eye calibration -> optional One Euro filter -> blink glitch rule -> lopsided-closure timer -> wink assist ->
+/// wink sharpening (optionally only while one eye is nearly closed) -> peak hold -> squint/sleepy output curve.
 /// One instance per data source, so each keeps its own calibration and timers. No VRCFT types, so recorded sessions can
 /// be replayed through it offline.</summary>
 public sealed class LidPipeline
@@ -11,12 +12,17 @@ public sealed class LidPipeline
     public sealed class LidCal
     {
         public float Sm = 0.7f, Lo = 0.10f, Hi = 0.85f;
+        /// <summary>The last <see cref="Map"/> used fixed levels (only then do the squint/sleepy levels apply).</summary>
+        public bool Fixed;
+        private float _fx, _fdx;
+        private bool _fInit;
 
         public float Map(float raw, ModuleConfig.LidConfig c, float? fixedClosed, float? fixedOpen, float maxFloor)
         {
-            if (fixedClosed is float fc && fixedOpen is float fo && fo - fc > 0.05f)
+            Fixed = fixedClosed is float fc && fixedOpen is float fo && fo - fc > 0.05f;
+            if (Fixed)
             {
-                Lo = fc; Hi = fo;
+                Lo = fixedClosed!.Value; Hi = fixedOpen!.Value;
             }
             else
             {
@@ -26,12 +32,52 @@ public sealed class LidPipeline
                 Lo = Math.Clamp(Lo, 0f, maxFloor);
                 Hi = Math.Clamp(Hi, MathF.Min(1f, MathF.Max(c.MinCeil, Lo + c.MinRange)), 1f);   // lower bound never above 1
             }
+            return Linear(raw, c.Deadband);
+        }
+
+        private float Linear(float raw, float deadband)
+        {
             float n = (raw - Lo) / (Hi - Lo);
-            return Math.Clamp((n - c.Deadband) / (1f - 2f * c.Deadband), 0f, 1f);
+            return Math.Clamp((n - deadband) / (1f - 2f * deadband), 0f, 1f);
+        }
+
+        /// <summary>One Euro filter (Casiez et al. 2012): the cutoff rises with the lid's speed, so a held lid is steady
+        /// and a blink passes with little lag.</summary>
+        public float Smooth(float v, float dt, ModuleConfig.LidLevels lv)
+        {
+            if (!_fInit || dt <= 0f) { _fx = v; _fdx = 0f; _fInit = true; return v; }
+            static float Alpha(float cutoff, float dt) => 1f / (1f + 1f / (2f * MathF.PI * cutoff * dt));
+            _fdx += ((v - _fx) / dt - _fdx) * Alpha(1f, dt);
+            _fx += (v - _fx) * Alpha(lv.FilterMinCutoff + lv.FilterBeta * MathF.Abs(_fdx), dt);
+            return _fx;
+        }
+
+        public void ResetFilter() => _fInit = false;
+
+        /// <summary>Bend a linear level through the calibrated squint and sleepy points: each point's raw level is mapped
+        /// with the same linear formula and becomes a knot at its target. Knots that are not strictly inside (0, 1) and in
+        /// order are skipped, so without them this returns <paramref name="v"/> unchanged.</summary>
+        public float Curve(float v, float? squintRaw, float? sleepyRaw, ModuleConfig.LidLevels lv, float deadband)
+        {
+            // raw points need fixed levels; sleepyLevel is already on the linear scale (shared by both eyes) and wins
+            float? xs = Fixed && squintRaw is float rs ? Linear(rs, deadband) : null;
+            float? xz = lv.SleepyLevel ?? (Fixed && sleepyRaw is float rz ? Linear(rz, deadband) : null);
+            if (xs == null && xz == null) return v;
+            float x0 = 0f, y0 = 0f;
+            foreach (var (knot, target) in new[] { (xs, lv.TargetSquint), (xz, lv.TargetSleepy) })
+            {
+                if (knot is not float x) continue;
+                if (x <= x0 || x >= 1f || target <= y0 || target >= 1f) continue;
+                if (v <= x) return y0 + (v - x0) * (target - y0) / (x - x0);
+                x0 = x; y0 = target;
+            }
+            return y0 + (v - x0) * (1f - y0) / (1f - x0);
         }
     }
 
     public readonly LidCal L = new(), R = new();
+    /// <summary>The last output before the squint/sleepy curve (the scale the gaze-hold rule was tuned on).</summary>
+    public float LinearL = 1f, LinearR = 1f;
     private float _holdL = 1f, _holdR = 1f;
     private long _holdUntilL, _holdUntilR, _asymSince, _asymLastSeen, _glitchSince, _glitchLastSeen, _lastTick;
     private bool _asymLeft;   // which eye is the closed one in the current lopsided closure
@@ -46,6 +92,8 @@ public sealed class LidPipeline
         _holdL = _holdR = 1f;
         _holdUntilL = _holdUntilR = _asymSince = _asymLastSeen = _glitchSince = _glitchLastSeen = _lastTick = 0;
         _assist = 0; _assistSince = 0; _assistLast = long.MinValue / 2;
+        L.ResetFilter(); R.ResetFilter();
+        LinearL = LinearR = 1f;
     }
 
     /// <summary>The tracker couples the eyes (closing one drags the other to ~0.5). When the lids differ by more than the
@@ -99,6 +147,9 @@ public sealed class LidPipeline
     {
         float mol = L.Map(rawL, c.Lid, levels.LeftClosed, levels.LeftOpen, maxFloor);
         float mor = R.Map(rawR, c.Lid, levels.RightClosed, levels.RightOpen, maxFloor);
+        float dt = _lastTick == 0 ? 0.01f : Math.Min((nowMs - _lastTick) / 1000f, 0.1f);
+        _lastTick = nowMs;
+        if (levels.Filter) { mol = L.Smooth(mol, dt, levels); mor = R.Smooth(mor, dt, levels); }
         // Blink vs wink: a lopsided closure that has not lasted CoupleMs is a blink -> close both eyes.
         bool coupled = false;
         bool asym = c.Blink.CoupleMs > 0 && MathF.Min(mol, mor) < c.Blink.AsymClosed && MathF.Max(mol, mor) > c.Blink.AsymOpen;
@@ -123,17 +174,20 @@ public sealed class LidPipeline
         }
         // The same eye still closed while the other one hovers between the two levels (a squinting open eye during a wink)
         // is the same closure going on: restarting the timer there would close both eyes again in the middle of a wink.
-        else if (_asymSince != 0 && (_asymLeft ? mol : mor) < c.Blink.AsymClosed && (_asymLeft ? mor : mol) >= c.Blink.AsymClosed)
+        // With asymHysteresis the closed eye may also rise a little above asymClosed (a one-eye squint hovering at the
+        // threshold), which would otherwise restart the timer and pull the open eye down again and again.
+        else if (_asymSince != 0 && (_asymLeft ? mol : mor) < c.Blink.AsymClosed + levels.AsymHysteresis && (_asymLeft ? mor : mol) >= c.Blink.AsymClosed)
             _asymLastSeen = nowMs;
         else if (nowMs - _asymLastSeen > 60) _asymSince = 0;   // small gaps do not restart the timer
         bool lifted = false;
         if (coupled) { _assist = 0; _assistSince = 0; }
         else if (c.Wink.Assist) lifted = ApplyWinkAssist(ref mol, ref mor, nowMs, c.Wink);
-        if (!coupled && !lifted) Sharpen(ref mol, ref mor, c.Wink);
-        float dt = _lastTick == 0 ? 0.01f : Math.Min((nowMs - _lastTick) / 1000f, 0.1f);
-        _lastTick = nowMs;
+        if (!coupled && !lifted && (levels.SharpenBelow is not float sb || MathF.Min(mol, mor) < sb)) Sharpen(ref mol, ref mor, c.Wink);
         mol = PeakHold(mol, ref _holdL, ref _holdUntilL, nowMs, dt, c.Blink);
         mor = PeakHold(mor, ref _holdR, ref _holdUntilR, nowMs, dt, c.Blink);
-        return (mol, mor);
+        // last, so every rule above keeps working on the linear scale it was tuned on
+        LinearL = mol; LinearR = mor;
+        return (L.Curve(mol, levels.LeftSquint, levels.LeftSleepy, levels, c.Lid.Deadband),
+                R.Curve(mor, levels.RightSquint, levels.RightSleepy, levels, c.Lid.Deadband));
     }
 }

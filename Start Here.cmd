@@ -15,7 +15,7 @@ echo   -----------------------------------------------------
 echo    1  Set up / update on this PC
 echo    2  Set up the headset too (over SSH)
 echo    3  Check status             (spoken result)
-echo    4  Calibrate eyelids        (spoken prompts, about 90 s, headset on)
+echo    4  Calibrate eyelids        (spoken prompts, about 70 s, headset on)
 echo    5  Live eyelid view
 echo    6  Open the settings folder
 echo    7  Uninstall (puts the stock SteamLink module back)
