@@ -107,6 +107,14 @@ Not done yet: offline replay tests for the eyelid pipeline (the replays in this 
   version" paragraph. Tested: dry run, `--off` on the real headset (already off: idempotent), syntax. Not tested: `-HeadsetOff` end to
   end through setup.ps1 (only the dry run). Checked the same day: SteamOS 0.4.5 stable keeps shm v5 and the same layout; SteamVR stable
   (build 25330290, BetaKey public) still sends NO lids (`lids=guessed`), so the branch waits for SteamVR 2.18.x on stable.
+- **SteamOS 0.4.5 stable, tested 2026-10-09 (SteamVR beta 2.18.2 still):** shm v5 and layout unchanged. `headset-install.sh` on the real
+  headset built the patched frameeyeosc (b9f0c01 + v5 patch), service active, no restart loop, module `source=frameeyeosc`. Calibrated
+  on that path (session in `sessions/20261009-*`): closed reads 0.000 on both eyes, open L 0.82 / R 0.76, both winks OK, 5 of 8 blinks
+  lopsided (glitch rule kept), gaze 3.2 deg from the dot (1.5 with offset+gain). The user checked blink/wink in VRChat: fine. Then
+  frameeyeosc was turned off again (`--off`) and a second calibration on SteamVR's lids: winks OK (left 0.00/0.71, right 0.62/0.11),
+  10 of 11 blinks lopsided (median 192 ms, max 352 ms; only `coupleMs` 180 covers them, there is no glitch rule on this path), gaze
+  3.5 deg (1.1 with offset+gain). It wrote `steamVrLid` 0.898/0.787, `wink.threshold` 0.35, `range` 0.4, `coupleMs` 180. The `wink`
+  section came out identical from both sources. SteamVR **stable** (build 25330290) still sends no lids (`lids=guessed`).
 - **(was) To do before that release** (asked by the user): a step that turns frameeyeosc off on the headset for people who already
   enabled it with an older version (`systemctl --user disable --now frameeyeosc`; needs SSH or the headset's terminal, so a
   setup option plus README update instructions), and a doctor hint for updaters. Reason: the old build restart-loops on
