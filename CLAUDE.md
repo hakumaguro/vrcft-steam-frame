@@ -102,7 +102,12 @@ Not done yet: offline replay tests for the eyelid pipeline (the replays in this 
   its own calibration on 0.4.3.
 - No release for now (user, 2026-10-02): this was only used with beta versions on both sides (SteamOS 0.4.3, SteamVR 2.18.2).
   Latest release stays v0.2.2; revisit when those versions are on the stable channels.
-- **To do before that release** (asked by the user): a step that turns frameeyeosc off on the headset for people who already
+- **Done 2026-10-09, uncommitted:** `setup.ps1 -Headset user@host -HeadsetOff` runs `headset-install.sh --off` (disable --now, pkill; unit,
+  checkout and linger stay), doctor prints an info line (not a warning) when `lids=steamvr`, README has an "Updating from an older
+  version" paragraph. Tested: dry run, `--off` on the real headset (already off: idempotent), syntax. Not tested: `-HeadsetOff` end to
+  end through setup.ps1 (only the dry run). Checked the same day: SteamOS 0.4.5 stable keeps shm v5 and the same layout; SteamVR stable
+  (build 25330290, BetaKey public) still sends NO lids (`lids=guessed`), so the branch waits for SteamVR 2.18.x on stable.
+- **(was) To do before that release** (asked by the user): a step that turns frameeyeosc off on the headset for people who already
   enabled it with an older version (`systemctl --user disable --now frameeyeosc`; needs SSH or the headset's terminal, so a
   setup option plus README update instructions), and a doctor hint for updaters. Reason: the old build restart-loops on
   shared-memory version 5, and a working one makes the module prefer frameeyeosc over SteamVR's values. The replay tool and the test scripts are in `sessions/20261002-steamvr-lids-dev/`.

@@ -147,6 +147,12 @@ only to your PC's address. It opens no ports on the headset. It is built from it
   bash ~/vrcft-steam-frame/scripts/headset-install.sh <PC-IP>
   ```
 
+**Updating from an older version, with SteamVR 2.18.2+ and SteamOS 0.4.3+:** eyelids now come from SteamVR, so the headset part is
+optional (it only adds a separate gaze per eye). An older headset part cannot read SteamOS 0.4.3's eye data and restarts in a loop
+without doing harm. Either run menu **2** again (it updates and starts a working one), or turn it off:
+`powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -Headset user@host -HeadsetOff`, or on the headset
+`systemctl --user disable --now frameeyeosc`. Menu **2** turns it back on.
+
 **To remove the headset part completely:**
 `systemctl --user disable --now frameeyeosc; loginctl disable-linger $USER; rm -rf ~/frameeyeosc ~/steamframe ~/.config/systemd/user/frameeyeosc.service`,
 and `~/.cargo/bin/rustup self uninstall` for Rust.

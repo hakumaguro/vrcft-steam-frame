@@ -48,6 +48,7 @@ if ($vrcftRunning -and $moduleProc) {
       "steamlink"   {
         if ($st.lids -eq "steamvr") {
           Write-Step ok "eye data from SteamVR (per-eye eyelids, one gaze direction for both eyes), $($st.steamLinkAgeMs) ms old"
+          Write-Step info "if you set up the headset part with an older version and the headset has not been updated since, it can restart-loop on SteamOS 0.4.3+; to turn it off: setup.ps1 -Headset user@host -HeadsetOff"
           if ($st.dominantEyeOnly -eq $true) { Warn "both eyelids always carry the same value: 'Track Dominant Eye Only' is on in the headset, so winks are not possible" "Track Dominant Eye Only is on in the headset, so winks do not work. Turn it off in V R settings, General." "in the headset: VR Settings > General > Track Dominant Eye Only (shown with advanced settings)" }
         } else {
           Warn "only the Steam Link gaze is arriving: eyelids are guessed" "Only the gaze is arriving. Eyelids are guessed. Update Steam V R and the headset, or set up the headset part." "update SteamVR to 2.18.2+ and SteamOS to 0.4.3+ (both beta at the time of writing), or on the headset: systemctl --user status frameeyeosc  (or run setup with -Headset)"

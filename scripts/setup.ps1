@@ -23,6 +23,7 @@ param(
   [switch]$Yes,                 # answer yes to every question
   [switch]$Uninstall,
   [string]$Headset,             # user@host of the Steam Frame (optional)
+  [switch]$HeadsetOff,          # with -Headset: turn frameeyeosc off on the headset instead of installing it
   [string]$HeadsetTarget,       # PC address the headset should send to (default: auto-detect / keep existing)
   [string]$KeyFile = "$env:USERPROFILE\.ssh\id_ed25519_frame",
   [switch]$NoSpeech,
@@ -269,7 +270,8 @@ if ($Headset) {
     & ssh -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new -o PubkeyAuthentication=no $Headset "mkdir -p ~/.ssh && chmod 700 ~/.ssh && { grep -qsF '$pubKey' ~/.ssh/authorized_keys || echo '$pubKey' >> ~/.ssh/authorized_keys; } && chmod 600 ~/.ssh/authorized_keys"
     & ssh @sshOpts -o BatchMode=yes $Headset "true" 2>$null; $keyOk = ($LASTEXITCODE -eq 0)
   }
-  if ($DryRun) { Write-Step would "copy the headset scripts, build frameeyeosc, install the auto-start service" }
+  if ($DryRun -and $HeadsetOff) { Write-Step would "stop frameeyeosc on the headset and disable its auto-start" }
+  elseif ($DryRun) { Write-Step would "copy the headset scripts, build frameeyeosc, install the auto-start service" }
   elseif (-not $keyOk) { Write-Step fail "cannot log in to $Headset with the key; is SSH enabled on the headset and the address right?" }
   else {
     Write-Step ok "SSH login works"
@@ -277,6 +279,11 @@ if ($Headset) {
     & ssh @sshOpts -o BatchMode=yes $Headset "mkdir -p ~/steamframe"
     & scp @sshOpts -q "$root\scripts\headset-setup.sh" "$root\scripts\headset-install.sh" "$root\scripts\frameeyeosc.service" "${Headset}:steamframe/"
     & ssh @sshOpts -o BatchMode=yes $Headset 'sed -i s/\r$// ~/steamframe/*'
+    if ($HeadsetOff) {
+      & ssh @sshOpts -o BatchMode=yes $Headset "bash ~/steamframe/headset-install.sh --off"
+      if ($LASTEXITCODE -eq 0) { Write-Step done "headset: frameeyeosc is off; the PC now uses SteamVR's eye data (run menu 2 again to turn it back on)"; $changed += "headset service off" }
+      else { Write-Step fail "could not turn frameeyeosc off (see the output above)" }
+    } else {
     $info = & ssh @sshOpts -o BatchMode=yes $Headset "bash ~/steamframe/headset-install.sh --info"
     $client = (($info | Where-Object { $_ -like "CLIENT=*" }) -replace '^CLIENT=', '')
     $unitTarget = (($info | Where-Object { $_ -like "UNIT=*" }) -replace '^UNIT=', '')
@@ -287,6 +294,7 @@ if ($Headset) {
     & ssh @sshOpts -o BatchMode=yes $Headset "bash ~/steamframe/headset-install.sh $target 9020"
     if ($LASTEXITCODE -eq 0) { Write-Step done "headset: frameeyeosc installed and sending to ${target}:9020"; $changed += "headset service" }
     else { Write-Step fail "headset setup failed (see the output above)" }
+    }
   }
 }
 

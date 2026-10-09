@@ -2,6 +2,7 @@
 # Run ON the Steam Frame (setup.ps1 -Headset copies it to ~/steamframe and runs it).
 #   headset-install.sh --info            print the PC address this SSH session comes from and the current service target
 #   headset-install.sh <PC-IP> [port]    build frameeyeosc if needed and install/refresh the auto-start service
+#   headset-install.sh --off             stop frameeyeosc and disable its auto-start (the PC then uses SteamVR's eye data)
 # Everything stays in $HOME. Undo: systemctl --user disable --now frameeyeosc; loginctl disable-linger "$USER"
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -13,7 +14,15 @@ if [ "${1:-}" = "--info" ]; then
   exit 0
 fi
 
-PC="${1:?usage: headset-install.sh <PC-IP> [port]  |  --info}"
+if [ "${1:-}" = "--off" ]; then
+  # for people who enabled frameeyeosc with an older version: stop it and keep it off (unit and checkout stay, lingering is not touched)
+  systemctl --user disable --now frameeyeosc 2>/dev/null || true
+  pkill -x frameeyeosc 2>/dev/null || true
+  echo "service: $(systemctl --user is-active frameeyeosc || true), enabled: $(systemctl --user is-enabled frameeyeosc 2>/dev/null || true)"
+  exit 0
+fi
+
+PC="${1:?usage: headset-install.sh <PC-IP> [port]  |  --info  |  --off}"
 PORT="${2:-9020}"
 
 # frameeyeosc (as built by headset-setup.sh) understands shared-memory layout versions 4 and 5
