@@ -19,7 +19,7 @@ if errorlevel 1 (
 )
 echo    1  Set up / update on this PC
 echo    2  Check status             (spoken result)
-echo    3  Calibrate eyelids        (spoken prompts, about 70 s, headset on)
+echo    3  Calibrate (optional)     (spoken prompts, about 70 s, headset on)
 echo    4  Live eyelid view
 echo    5  Open the settings folder
 echo    6  Uninstall (puts the stock SteamLink module back)

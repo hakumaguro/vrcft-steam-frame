@@ -26,6 +26,17 @@ Eye tracking for the Steam Frame in VRChat via VRCFaceTracking (VRCFT). Read `RE
 - Day state: headset SteamOS 0.5.8 beta (build 20261106), PC SteamVR beta 2.19.2 (build 26496310). This morning's log
   showed per-eye lids from SteamVR working on these versions.
 
+## v0.3.0 prep (2026-11-09, committed locally on `steamvr-eyelids`, not pushed, not merged)
+
+- Version 0.3.0 (csproj + common.ps1), README rewritten for the release: no beta box, "What you need" (SteamOS 0.4.3+,
+  SteamVR 2.18.2+), "New in 0.3", menu numbers fixed everywhere, headset part = Advanced, calibration optional,
+  troubleshooting rewritten (SteamVR 2.19.1+ asks whether to share eye data with PC apps: allow). Zip
+  `dist/vrcft-steam-frame-0.3.0.zip` built (DLL 0.3.0.0), setup `-DryRun` from the unzipped copy picks the prebuilt DLL.
+- SteamVR stable is 2.18.x (web, 2026-11-09); 2.19 is beta only. Gate before merge/push/release: switch SteamVR to the
+  public branch (Steam > SteamVR > Properties > Betas > None), status must show `lids=steamvr`, then a wink check.
+  master fast-forwards into the branch (master is an ancestor).
+- Gotcha: Git Bash `sed -i` strips CR from CRLF files (`Start Here.cmd`, `.ps1`); use the Edit tool or re-add CR.
+
 ## Stage 2: learned open level (2026-11-09, uncommitted, deployed; not yet checked by the user in VRChat)
 
 - `module/OpenLevelLearner.cs` (no VRCFT types; in the replay project too): per eye a 200-bin histogram of raw values,

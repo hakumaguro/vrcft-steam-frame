@@ -3,60 +3,65 @@
 Eye tracking for the **Steam Frame** in **VRChat**, through [VRCFaceTracking](https://docs.vrcft.io/) (VRCFT):
 per-eye gaze, real blinks and winks. Mouth tracking is not possible: the Frame has no lower-face cameras.
 
-> Unofficial. It reads a private, undocumented format on the headset that a Frame update can change. Use at your own risk.
+> Unofficial. It uses eye data that SteamVR shares over OSC, and (optionally) a private, undocumented format on the
+> headset. A SteamOS or SteamVR update can change either. Use at your own risk.
 
-> ## This is the development branch `steamvr-eyelids`. It is not a release.
->
-> **Tested on** (one headset, one PC):
->
-> | | Version |
-> |---|---|
-> | Steam Frame | **SteamOS 0.5.8 (Beta)**, build 20261106 (2026-11-09); earlier 0.4.3 beta and 0.4.5 stable |
-> | SteamVR on the PC | **2.19.2 (Beta)** (2026-11-09); earlier 2.18.2 beta |
-> | VRCFaceTracking | 5.4.5 (Steam) |
-> | PC | Windows 11 |
->
-> **New on this branch (2026-11-09):**
-> - **No calibration needed.** The module learns how open your eyes are while you wear the headset (about 20 s after
->   putting it on, a few minutes to settle) and remembers it for next time. Menu **3** is now optional, for fine-tuning winks.
-> - **Better right winks** (90 % of the hold in our check, was 60-72 %), blinks with both eyes together.
-> - **Clearer health check:** the status (menu **2**) warns when the eye cameras run slow or the data keeps dropping out.
-> - **Simpler menu:** the headset part moved to **A** (Advanced), with a new option to turn it off. Not needed any more.
-> - The calibration's trace no longer gets stuck on after an interrupted run.
->
-> **Do not install this branch with earlier versions.** What is new here (each eye's eyelid sent by SteamVR itself, so no
-> headset part is needed) only exists from SteamOS 0.4.3 **and** SteamVR 2.18.2 on. With anything older, SteamVR sends no
-> eyelid values: blinks are guessed and winks do not work, and this branch has not been tested there at all. For earlier
-> versions use the released version from the `master` branch:
-> [v0.2.2](https://github.com/hakumaguro/vrcft-steam-frame/releases/latest).
->
-> Both required versions were beta when this was written, so they can still change and break this. The branch will be
-> merged and released once they are in the normal (non-beta) channels.
->
-> **To try it:** you need SteamOS 0.4.3+ on the Frame and SteamVR 2.18.2+ on the PC (both from their beta channels). There
-> is no zip for this branch: download the source of this branch (`git clone -b steamvr-eyelids
-> https://github.com/hakumaguro/vrcft-steam-frame`, or "Code > Download ZIP" with this branch selected), close SteamVR,
-> run `Start Here.cmd` and choose **1** (it builds the module and offers to install the .NET SDK), then **S** to start
-> VRCFT and wear the headset. Skip the Advanced menu (**A**). Leave "Track Dominant Eye Only" off in the headset.
+## What you need
+
+| | Version |
+|---|---|
+| Steam Frame | **SteamOS 0.4.3 or newer** |
+| SteamVR on the PC | **2.18.2 or newer** |
+| VRCFaceTracking | from Steam (tested with 5.4.5) |
+| Avatar | VRCFT eye tracking (`FT/v2` parameters) |
+
+From these versions on, SteamVR sends each eye's eyelid to the PC itself, so **nothing has to be installed on the
+headset** and no SSH is needed. With older versions use [v0.2.2](https://github.com/hakumaguro/vrcft-steam-frame/releases/tag/v0.2.2).
+
+## New in 0.3
+
+- **No calibration needed.** The module learns how open your eyes are while you wear the headset (it starts about 20 s
+  after you put it on and settles within a few minutes) and remembers it for next time. Calibration (menu **3**) is
+  now optional, for fine-tuning winks.
+- **Blinks and winks from SteamVR itself**, per eye. Better right winks (90 % of the hold in our check, was 60-72 %),
+  blinks close both eyes together.
+- **Clearer health check:** the status (menu **2**) warns when the eye cameras run slow or the data keeps dropping out.
+- **Simpler menu:** the headset part moved to **A** (Advanced), with a new option to turn it off. It is not needed any more.
+- Half-closed (sleepy) eyelids can be tuned (`steamVrLid.sleepyLevel`), and calibration shows a live eyelid meter in the headset.
 
 ## Quick start
 
-You need: **VRCFaceTracking** (from Steam), **SteamVR + Steam Link** with the Frame, and an avatar with VRCFT eye tracking
-(`FT/v2` parameters). For calibration, also **Python 3** ([python.org](https://www.python.org/downloads/)).
-
-1. *(On this development branch: see the box at the top instead; the release zip does not contain this branch.)*
-   Download **`vrcft-steam-frame-<version>.zip`** from the [latest release](https://github.com/hakumaguro/vrcft-steam-frame/releases/latest)
+1. Download **`vrcft-steam-frame-<version>.zip`** from the [latest release](https://github.com/hakumaguro/vrcft-steam-frame/releases/latest)
    and unzip it anywhere. (It contains the ready-built module, so nothing else needs installing. Downloading the source
    instead also works: setup then builds the module and offers to install the .NET SDK for your user.)
 2. **Close SteamVR**, then double-click **`Start Here.cmd`** and choose **1**.
    It sets everything up on the PC, restarts VRCFaceTracking and **speaks** the result. Run it again any time: it only
    changes what is not already right.
-3. **With SteamOS 0.4.3 and SteamVR 2.18.2 or newer you can skip this step**: SteamVR then sends each eye's eyelid
-   itself (see [Newer SteamOS and SteamVR](#newer-steamos-and-steamvr-no-headset-part-needed)). On older versions, for
-   **eyelids and winks**, choose **A** (Advanced), then **1**, and enter the headset login (for example `steamos@192.168.1.50`; SSH must be
-   enabled on the headset). You type the headset password once; after that it installs everything and starts it
-   automatically with every boot. Not comfortable with SSH? Read [Why SSH?](#why-ssh) first: it is only needed once,
-   you can turn it off afterwards, and there is a way without it.
+3. Start SteamVR, put the headset on and play. If SteamVR asks whether to share eye tracking data with PC applications,
+   choose **allow**. Leave **"Track Dominant Eye Only" off** in the headset (VR Settings > General, shown with advanced
+   settings): with it on, both eyelids follow one eye and winks cannot work.
+
+Something not working? Choose **2**: it checks every part and says what is wrong and how to fix it.
+
+Blinks or winks not quite right after a few minutes of wear? Choose **3** (needs [Python 3](https://www.python.org/downloads/)):
+a voice guides you through about 70 seconds of open / closed / wink steps and applies the result.
+
+**Always start VRCFaceTracking from Steam** (menu **S** does that). Starting its `.exe` directly skips the modules (VRCFT quirk).
+
+**Updating from 0.2.x:** run menu **1** again (your settings are kept). If you installed the headset part (old menu 2),
+it is no longer needed and an old one cannot read the eye data of SteamOS 0.4.3+ (it restarts in a loop, harmlessly).
+Turn it off with **A**, then **2**, or on the headset `systemctl --user disable --now frameeyeosc`. While it sends, the
+module prefers its data over SteamVR's.
+
+## The headset part (Advanced, optional)
+
+Menu **A** > **1** installs [frameeyeosc](https://github.com/konsti219/frameeyeosc) on the headset over SSH. On SteamOS
+0.4.3+ it adds only one thing: a gaze direction per eye instead of one for both. When it is sending, the module uses it
+for the eyelids too, with its own calibration, so calibrate (menu **3**) after installing or removing it.
+
+1. Enable SSH on the headset (Developer Mode), then choose **A**, **1** and enter the headset login (for example
+   `steamos@192.168.1.50`). You type the headset password once; after that it installs everything and starts it with
+   every boot. Read [Why SSH?](#why-ssh) first if you are unsure.
 
    **What the password question looks like.** After the "authorising the key" line the window stops at:
 
@@ -66,64 +71,35 @@ You need: **VRCFaceTracking** (from Steam), **SteamVR + Steam Link** with the Fr
    ```
 
    Type the password of the headset's user account and press **Enter**. **Nothing appears while you type** (no dots, no
-   stars); that is normal for SSH, the keys are still being read. Then it prints `[ok   ] SSH login works` and carries on.
-   If you see `Permission denied, please try again.` the password was wrong (you get three tries; run Advanced > 1 again to
-   restart). If you never set a password on the headset, set one first with `passwd` in a terminal on the headset.
-4. Put the headset on and choose **4** to calibrate. A voice guides you (about 70 seconds) and tells you the result.
-
-Something not working? Choose **3**: it checks every part and says what is wrong and how to fix it.
-
-**Always start VRCFaceTracking from Steam.** Starting its `.exe` directly skips the modules (VRCFT quirk).
-
-## Newer SteamOS and SteamVR: no headset part needed
-
-From **SteamOS 0.4.3** on the Frame together with **SteamVR 2.18.2** on the PC (both in beta when this was written),
-SteamVR sends how far each eye is closed to the PC by itself. The module uses that when the headset part is not sending,
-so menu **1** and a calibration (menu **4**) are enough: blinks and winks work without SSH or anything installed on the
-headset. Menu **3** then says "eye data from SteamVR".
-
-- The gaze on this path is one direction for both eyes (the headset part sends one per eye).
-- **Leave "Track Dominant Eye Only" off** (headset: VR Settings > General, shown with advanced settings). With it on, both
-  eyelids follow one eye, so winks cannot work; menu **3** tells you when that is the case.
-- The headset part (menu **2**) is optional on these versions. It adds one thing: a gaze direction per eye instead of one
-  for both. When it is sending, the module uses it for the eyelids too, with its own calibration, so calibrate again
-  (menu **4**) after installing or removing it.
-- A headset part installed by version 0.2.2 or older stops working on SteamOS 0.4.3 (the headset's eye-data format
-  changed). Nothing breaks: the module switches to SteamVR's values. Run menu **2** again if you want it back (it now
-  builds frameeyeosc with a small patch for the new format), or remove it (see [Why SSH?](#why-ssh)).
-- Calibrate again (menu **4**) after moving to these versions: the eyelid values are on a different scale.
+   stars); that is normal for SSH. Then it prints `[ok   ] SSH login works` and carries on. If you see
+   `Permission denied, please try again.` the password was wrong (three tries; run **A** > **1** again to restart). If
+   you never set a password on the headset, set one first with `passwd` in a terminal on the headset.
+2. **A** > **2** turns it off again (stops it and its auto-start; the files stay).
 
 ## Using the headset with more than one PC
 
-The headset sends its eye data to **one** PC address. After playing on another PC, the first PC gets nothing from the
-headset: gaze still moves (Steam Link fallback), but blinks are guessed and winks don't work.
+Without the headset part there is nothing to do: each PC gets its eye data from its own SteamVR, and each PC learns
+the open level by itself. Run menu **1** once on every PC.
 
-- **Every time you switch PCs, run Advanced > 1 on the PC you are about to use.** It points the headset at that PC and changes
-  nothing else; after the first time it takes a few seconds (nothing is rebuilt).
-- SSH must be on in the headset for Advanced > 1. If you turned it off after setup, turn it on again first.
-- **You do not calibrate again when you switch.** Each PC keeps its own calibration (it is stored on the PC, in
-  `steamframe-config.json`), and it stays valid while the headset is pointed elsewhere. Example: PCs A and B are both
-  calibrated and you move from A to B: run menu **2** on B, nothing else.
-- A PC you have never used needs menu **1** once and a calibration (menu **4**) once. Instead of calibrating there, you
-  can copy `steamframe-config.json` from the other PC (menu **6** opens the folder on each PC): the values describe your
-  eyes and the headset, not the PC.
-- Calibrate again only when blinks or winks look wrong, the same as with one PC.
-- Not sure which PC the headset is pointed at? Menu **3** on the PC you are using says "only the gaze is arriving"
-  (or "eye data from SteamVR" on newer versions) when it is not this one.
+With the headset part, the headset sends its data to **one** PC address. **Every time you switch PCs, run A > 1 on
+the PC you are about to use** (SSH must be on in the headset; after the first time it takes a few seconds). Until
+then the module on this PC uses SteamVR's data, which works too, just with one gaze for both eyes. Each PC keeps its own
+calibration in `steamframe-config.json` (menu **5** opens the folder); you can copy that file between PCs.
 
-## Why SSH?
+## Why SSH? (headset part only)
 
-**Short version:** the eyelid data never leaves the headset on its own, so a small program has to run *on the headset* to
-send it to your PC. SSH is only how the PC installs that program for you. The eye data itself does not go through SSH.
+**Short version:** with SteamOS 0.4.3+ and SteamVR 2.18.2+ you do not need SSH at all. The headset part only adds a gaze
+per eye; it is a small program that has to run *on the headset*, and SSH is only how the PC installs it for you. The eye
+data itself does not go through SSH.
 
 **The longer version:**
 
 - The Frame tracks your eyes with its own cameras, and the result (gaze and how open each eyelid is) sits in the headset's
-  memory. Steam Link forwards only part of it to the PC: gaze, with both eyes identical, and an eyelid value that is
-  always 0. That is why blinks and winks can't work from the PC side alone.
+  memory. Steam Link forwards part of it to the PC: one gaze for both eyes and (from SteamOS 0.4.3 / SteamVR 2.18.2) each
+  eye's eyelid. Older versions sent an eyelid value that was always 0, which is why the headset part used to be needed.
 - [frameeyeosc](https://github.com/konsti219/frameeyeosc) is a small program that reads that data on the headset and sends
   it to your PC over the network (OSC, UDP port 9020).
-- To install a program on the headset, something has to type commands on it. Menu **2** does that from the PC over SSH:
+- To install a program on the headset, something has to type commands on it. **A** > **1** does that from the PC over SSH:
   it copies three small scripts, builds frameeyeosc, and sets it to start with the headset.
 
 **What SSH is used for, and what not:**
@@ -132,7 +108,7 @@ send it to your PC. SSH is only how the PC installs that program for you. The ey
 |---|---|
 | Installing or updating the headset part (Advanced > 1) | yes, once |
 | Sending eye data while you play | **no**: frameeyeosc sends it directly, SSH can be off |
-| Everything on the PC (menus 1, 3, 4, 5) | no |
+| Everything on the PC (menus 1-6, S) | no |
 
 **What runs on the headset:** frameeyeosc, as your normal user (not root). It reads only the eye-tracking data and sends it
 only to your PC's address. It opens no ports on the headset. It is built from its source code (about 300 lines) in
@@ -147,19 +123,13 @@ only to your PC's address. It opens no ports on the headset. It is built from it
 
 **Without SSH at all**, you have two options:
 
-- **Skip the headset part.** Menu 1 alone gives you gaze through Steam Link, but blinks are guessed and winks don't work.
+- **Skip the headset part.** Menu 1 alone gives you gaze, blinks and winks through SteamVR (SteamOS 0.4.3+, SteamVR 2.18.2+).
 - **Install it from the headset's own desktop.** Open a terminal in the Frame's desktop mode and run the same script
   Advanced > 1 would run, with your PC's address (shown by `ipconfig` on the PC; use the one on the same network as the headset):
   ```
   git clone https://github.com/hakumaguro/vrcft-steam-frame ~/vrcft-steam-frame
   bash ~/vrcft-steam-frame/scripts/headset-install.sh <PC-IP>
   ```
-
-**Updating from an older version, with SteamVR 2.18.2+ and SteamOS 0.4.3+:** eyelids now come from SteamVR, so the headset part is
-optional (it only adds a separate gaze per eye). An older headset part cannot read SteamOS 0.4.3's eye data and restarts in a loop
-without doing harm. Either run menu **2** again (it updates and starts a working one), or turn it off:
-`powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -Headset user@host -HeadsetOff`, or on the headset
-`systemctl --user disable --now frameeyeosc`. Menu **2** turns it back on.
 
 **To remove the headset part completely:**
 `systemctl --user disable --now frameeyeosc; loginctl disable-linger $USER; rm -rf ~/frameeyeosc ~/steamframe ~/.config/systemd/user/frameeyeosc.service`,
@@ -169,18 +139,18 @@ and `~/.cargo/bin/rustup self uninstall` for Rust.
 
 | You notice | Do this |
 |---|---|
-| VRCFaceTracking closes itself when you open **Module Registry** | Fixed in 0.2.1: run menu **1** once (it repairs the module's `module.json`, which lacked the links that page needs). |
-| Winking closes **both** avatar eyes | The avatar links its eyelids: open the avatar menu and turn off **Eye Sync** / "Link eyes". |
-| Status says "no eye data" | Wear the headset and connect Steam Link. For eyelids, the headset part must run: menu **2** sets it up again. |
-| Status says "only the gaze is arriving" | Gaze works, eyelids are guessed. Update SteamVR (2.18.2+) and the headset (SteamOS 0.4.3+), or use the headset part: menu **2**, or on the headset `systemctl --user status frameeyeosc`. |
+| Winking closes **both** avatar eyes | The avatar links its eyelids: open the avatar menu and turn off **Eye Sync** / "Link eyes". Also check that "Track Dominant Eye Only" is off in the headset. |
+| Status says "no eye data" | Wear the headset and connect Steam Link. If SteamVR asked whether to share eye tracking data with PC applications, allow it. Run menu **1** again (it checks that Steam Link shares eye data on port 9015). |
+| Status says "only the gaze is arriving" | Gaze works, eyelids are guessed: SteamVR sends no eyelid values. Update SteamVR (2.18.2+) and the headset (SteamOS 0.4.3+). |
 | Status says "Track Dominant Eye Only is on" | Both eyelids follow one eye, so winks cannot work. Turn it off in the headset: VR Settings > General (shown with advanced settings). |
-| Eyelids stopped after a headset reboot or network change ("only the gaze is arriving") | The headset may now reach the PC over a different network. Run menu **2** again: it picks the address that works and keeps the rest. |
-| Eyelids stopped after you used the headset with another PC | The headset still sends to that PC. Run menu **2** on this one (see "Using the headset with more than one PC"). |
-| Status says "your settings file has an error" | The module ignored the broken `steamframe-config.json` and kept the previous settings. Fix it, restore `steamframe-config.json.bak`, or calibrate again (menu 3). |
-| Status says "started without its modules" | Close VRCFaceTracking and start it from Steam. |
-| Status mentions the old SteamLink module / port 9015 | Menu **1** moves the stock SteamLink module aside (menu **7** puts it back). |
-| Eyes look wrong after a Frame update | With the headset part: menu **2** again; if the headset reports a new eye-data version, the headset part needs an update. Without it (SteamVR's own eyelid values): calibrate again (menu **4**). |
-| Blinks too shallow, winks weak | Menu **4** (calibrate). Some people squint the other eye when winking; the calibration accounts for that. |
+| Status says the eye cameras are slow | SteamVR runs the eye cameras at a low rate, so blinks can be missed. Check SteamVR's eye-tracking settings on the headset (`eyeTrackingRateMin`). |
+| Eyes look half closed for the first minutes | The module is still learning your open level (it starts about 20 s after you put the headset on). If it stays like that, calibrate (menu **3**). |
+| Blinks too shallow, winks weak | Menu **3** (calibrate). Some people squint the other eye when winking; the calibration accounts for that. |
+| Status says "your settings file has an error" | The module ignored the broken `steamframe-config.json` and kept the previous settings. Fix it, restore `steamframe-config.json.bak`, or calibrate again (menu **3**). |
+| Status says "started without its modules" | Close VRCFaceTracking and start it from Steam (menu **S**). |
+| Status mentions the old SteamLink module / port 9015 | Menu **1** moves the stock SteamLink module aside (menu **6**, uninstall, puts it back). |
+| VRCFaceTracking closes itself when you open **Module Registry** | Fixed in 0.2.1: run menu **1** once (it repairs the module's `module.json`). |
+| With the headset part: eyelids stopped after a network change or after using another PC | Run **A** > **1** again on this PC: it points the headset here and keeps the rest. |
 
 Logs (PC): `%TEMP%\steamframe-module.log` (only changes are logged, capped at 1 MB).
 
@@ -190,7 +160,7 @@ Logs (PC): `%TEMP%\steamframe-module.log` (only changes are logged, capped at 1 
 |---|---|
 | 1 Set up / update | `scripts\setup.ps1`: finds VRCFaceTracking in any Steam library, installs or updates the module (your calibration is kept), moves the stock SteamLink module aside, sets VRCFT's output to VRChat's port 9000, sets Steam Link to share eye data on port 9015 (only while SteamVR is closed, with a backup), checks the firewall rule (offers an admin prompt), restarts VRCFaceTracking. `-DryRun` shows what would change. |
 | 2 Status | `scripts\doctor.ps1`: checks every part and speaks a summary. |
-| 3 Calibrate | `tools\tune.py calibrate`: spoken prompts (open, close, winks, blinks), then measures your eyes and applies the result. A small panel in the middle of the view shows the raw left/right eyelid values while it records (`--no-meter` turns it off; `tune.py meter` shows only the panel). With `--gaze` it also shows a dot in the headset to look at, and reports how many degrees your gaze is off (a report only; nothing is corrected yet). |
+| 3 Calibrate (optional) | `tools\tune.py calibrate`: spoken prompts (open, close, winks, blinks), then measures your eyes and applies the result. A small panel in the middle of the view shows the raw left/right eyelid values while it records (`--no-meter` turns it off; `tune.py meter` shows only the panel). With `--gaze` it also shows a dot in the headset to look at, and reports how many degrees your gaze is off (a report only; nothing is corrected yet). |
 | 4 Live view | raw tracker vs output eyelids, updated live. |
 | 5 Settings folder | opens the folder with `steamframe-config.json`. |
 | 6 Uninstall | removes the module (calibration saved and restored on reinstall) and restores the stock SteamLink module. |
@@ -209,7 +179,7 @@ Before SteamOS 0.4.3 / SteamVR 2.18.2 the Steam Link driver's eyelid value is al
 openness only exists in the headset's shared memory (`/dev/shm/eye-server.mmap`), which frameeyeosc reads and sends over OSC.
 From those versions on, SteamVR sends each eye's closedness itself (`/sl/xrfb/facew/EyesClosedL` and `EyesClosedR`), and the
 module uses it whenever frameeyeosc is not sending. Upstream frameeyeosc reads shared-memory version 4; SteamOS 0.4.3 has
-version 5 (the eye record moved by 5 bytes), so menu **2** builds it with a small patch that reads both.
+version 5 (the eye record moved by 5 bytes), so **A** > **1** builds it with a small patch that reads both.
 
 ```
 Steam Frame (SteamOS)                                PC (Windows)
@@ -220,13 +190,14 @@ Steam Frame (SteamOS)                                PC (Windows)
   Steam Link driver ---- OSC/UDP :9015 (this PC) -----------+   (used when frameeyeosc is not sending)
 ```
 
-Tested with Windows 11, VRCFaceTracking 5.4.5 (Steam), Steam Frame SteamOS build 20260922 (eye shared-memory version 4)
-with frameeyeosc, and SteamOS 0.4.3 beta (eye shared-memory version 5) with SteamVR 2.18.2 beta through SteamVR's own eyelid values.
+Tested with Windows 11 and VRCFaceTracking 5.4.5 (Steam). SteamVR's own eyelid values: SteamOS 0.4.3 beta, 0.4.5 and
+0.5.8 beta with SteamVR 2.18.2 beta and 2.19.2 beta. frameeyeosc: SteamOS build 20260922 (eye shared-memory version 4)
+and 0.4.5 (version 5, patched).
 
 ## Tuning by hand
 
 The module reloads `steamframe-config.json` (menu **5** opens its folder) within a second, no restart needed.
-Calibration (menu 3) writes the per-eye levels and blink/wink settings for you; these are the knobs:
+Calibration (menu **3**, optional) writes the per-eye levels and blink/wink settings for you; these are the knobs:
 
 | key | meaning |
 |---|---|
