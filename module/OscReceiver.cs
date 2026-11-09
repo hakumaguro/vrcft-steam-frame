@@ -18,6 +18,13 @@ public sealed class OscReceiver : IDisposable
     public long LastAnyTicks;                        // last time any OSC message arrived
     public long LastPacketTicks;                     // Environment.TickCount64 of last eye packet
     public long Packets;
+    /// <summary>Gaze messages whose value differs from the one before: about one per eye-camera frame (median 87/s at the
+    /// normal 90 Hz, measured 2026-10-02), so it shows when SteamVR slows the eye cameras (15/s seen on SteamOS 0.5.7+).
+    /// SteamVR repeats the last value in between, so the message count alone would not show it.</summary>
+    public long GazeChanges;
+    /// <summary>Like <see cref="GazeChanges"/>, only while both eyes read open: a headset that is not worn still sends
+    /// changing noise (~32 a second seen 2026-11-09, one eye "closed"), which must not look like slow cameras.</summary>
+    public long GazeChangesOpen;
     // Per-eye closedness (0 open .. 1 closed), sent by SteamVR 2.18.2+ with SteamOS 0.4.3+.
     public volatile float ClosedL, ClosedR;
     public long LastLidTicks;                        // 0 until both eyes were received
@@ -106,6 +113,11 @@ public sealed class OscReceiver : IDisposable
         switch (addr)
         {
             case "/sl/eyeTrackedGazePoint" when vals.Count >= 3:
+                if (Gaze[0] != vals[0] || Gaze[1] != vals[1] || Gaze[2] != vals[2])
+                {
+                    Interlocked.Increment(ref GazeChanges);
+                    if (ClosedL < 0.55f && ClosedR < 0.55f) Interlocked.Increment(ref GazeChangesOpen);
+                }
                 Gaze[0] = vals[0]; Gaze[1] = vals[1]; Gaze[2] = vals[2];
                 LastPacketTicks = Environment.TickCount64;
                 Interlocked.Increment(ref Packets);

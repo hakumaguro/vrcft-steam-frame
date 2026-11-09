@@ -191,6 +191,9 @@ class Overlay:
     def hide(self):
         return self._send("hide")
 
+    def meter_hide(self):
+        return self._send("meterhide")
+
     def close(self):
         if not self.p:
             return
@@ -221,15 +224,27 @@ class Meter:
     in a background thread. The trace must be on (Tracing)."""
 
     def __init__(self, overlay):
-        self.ov, self.stop = overlay, threading.Event()
+        self.ov, self.stop, self.paused = overlay, threading.Event(), False
+        self.mlock = threading.Lock()       # an update and a pause never interleave
         self.t = threading.Thread(target=self._run, daemon=True)
         if overlay.ok:
             self.t.start()
 
+    def pause(self, on):
+        """Hide the meter while the gaze dot is shown: it sits in the middle of the view, nearer than the dot, and
+        covered it (2026-11-09, the user saw no dot at all)."""
+        with self.mlock:
+            if on and not self.paused:
+                self.ov.meter_hide()
+            self.paused = on
+
     def _run(self):
         while not self.stop.wait(0.1):
-            if not self.ov.meter(*last_trace_lids()):
-                return
+            with self.mlock:
+                if self.paused:
+                    continue
+                if not self.ov.meter(*last_trace_lids()):
+                    return
 
     def close(self):
         self.stop.set()
@@ -264,29 +279,52 @@ def _save_cfg(cp, cfg):
         json.dump(cfg, f, indent=2)
 
 
+TRACE_HEARTBEAT = os.path.join(os.environ.get("TEMP", "."), "steamframe-trace.on")
+
+
 class Tracing:
-    """Turn the module's sample trace on while inside the `with` block, then put the setting back as it was."""
+    """Keep the module's sample trace on while inside the `with` block: touch the heartbeat file every second. The module
+    traces only while that file is fresh (3 s), so a killed or closed tool cannot leave tracing on. The config is not
+    touched (its `trace` setting is for tracing by hand)."""
 
     def __enter__(self):
-        self.cp = config_path()
-        if not self.cp:
+        if not config_path():
             speak_wait("The Steam Frame module is not installed. Run setup first.")
             sys.exit("The Steam Frame module is not installed (no config found). Run setup first.")
-        cfg = _load_cfg(self.cp)
-        self.had = "trace" in cfg
-        self.prev = cfg.get("trace")
-        if cfg.get("trace") is not True:
-            cfg["trace"] = True
-            _save_cfg(self.cp, cfg)
+        try:   # a module from before 2026-11-09 ignores the heartbeat (it has no eyeRate in its status)
+            with open(STATUS, encoding="utf-8") as f:
+                st_ = json.load(f)
+            if time.time() * 1000 - st_.get("updated", 0) < 10_000 and "eyeRate" not in st_:
+                speak_wait("The installed module is too old for this tool. Run setup, option 1, first.")
+                sys.exit("The installed module is older than this tool and would not record samples. "
+                         "Run Start Here, option 1 (setup), first.")
+        except (OSError, ValueError):
+            pass
+        self.stop = threading.Event()
+        self._touch()
+        self.t = threading.Thread(target=self._run, daemon=True)
+        self.t.start()
         return self
 
+    def _touch(self):
+        try:
+            with open(TRACE_HEARTBEAT, "a"):
+                pass
+            os.utime(TRACE_HEARTBEAT, None)
+        except OSError:
+            pass
+
+    def _run(self):
+        while not self.stop.wait(1.0):
+            self._touch()
+
     def __exit__(self, *exc):
-        cfg = _load_cfg(self.cp)
-        if self.had:
-            cfg["trace"] = self.prev
-        else:
-            cfg.pop("trace", None)
-        _save_cfg(self.cp, cfg)
+        self.stop.set()
+        self.t.join(timeout=2)
+        try:
+            os.remove(TRACE_HEARTBEAT)
+        except OSError:
+            pass
 
 
 def wait_for_samples(timeout=4.0):
@@ -496,6 +534,8 @@ def _record(a):
     t_start = time.time()
     try:
         for label, secs, text, target in steps:
+            if meter:
+                meter.pause(bool(target))     # the meter covers the dot; it is off during the gaze steps
             shown = gaze and dot.show(*(target or (0, 0)))        # the dot rests in the centre between the gaze steps
             t0 = time.time()
             print(f"  {label:<11} {secs:>4}s  {text or 'dot ' + GAZE_NAMES[target]}")

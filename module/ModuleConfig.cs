@@ -15,7 +15,8 @@ public sealed class ModuleConfig
     public GazeConfig Gaze { get; set; } = new();
     /// <summary>Swap left/right eyes (if the headset reports them the other way round).</summary>
     public bool SwapEyes { get; set; }
-    /// <summary>Write 30 ms samples to %TEMP%\steamframe-trace.csv. tools/tune.py turns this on while it records or watches.</summary>
+    /// <summary>Write 30 ms samples to %TEMP%\steamframe-trace.csv all the time (by hand only). tools/tune.py does not use
+    /// this: it keeps %TEMP%\steamframe-trace.on fresh while it records or watches.</summary>
     public bool Trace { get; set; }
 
     /// <summary>Fixed calibration per eye (raw tracker units). When both closed and open are set for an eye, adaptation is off for it.</summary>
@@ -45,6 +46,12 @@ public sealed class ModuleConfig
         public float AsymHysteresis { get; set; }
         /// <summary>One Euro filter on each eye's linear level: steady while a lid is held, little lag when it moves fast.</summary>
         public bool Filter { get; set; }
+        /// <summary>Learn each eye's open level while worn (<see cref="OpenLevelLearner"/>) instead of using a calibrated
+        /// one; LeftOpen/RightOpen then only seed it. Unset = the source's default: on for SteamVR's eyelids, off for
+        /// frameeyeosc.</summary>
+        public bool? LearnOpen { get; set; }
+        /// <summary>How long the learned level remembers, in minutes of wear (the time constant).</summary>
+        public float LearnMinutes { get; set; } = 10f;
         /// <summary>Cutoff (Hz) while the lid is still; lower = steadier.</summary>
         public float FilterMinCutoff { get; set; } = 1.5f;
         /// <summary>How fast the cutoff rises with lid speed (per unit/s); higher = less lag in blinks.</summary>
@@ -176,6 +183,7 @@ public sealed class ModuleConfig
             if (lv.SleepyLevel is float sl && Bad(sl, 0.01f, 0.99f)) return $"{name}.sleepyLevel must be 0.01..0.99";
             if (lv.SharpenBelow is float sb && Bad(sb, 0f, 1f)) return $"{name}.sharpenBelow must be 0..1";
             if (Bad(lv.AsymHysteresis, 0f, 0.5f)) return $"{name}.asymHysteresis must be 0..0.5";
+            if (Bad(lv.LearnMinutes, 0.5f, 240f)) return $"{name}.learnMinutes must be 0.5..240";
             if (Bad(lv.FilterMinCutoff, 0.01f, 100f) || Bad(lv.FilterBeta, 0f, 1000f)) return $"{name}.filterMinCutoff (0.01..100) or filterBeta (0..1000) out of range";
         }
         if (Bad(Wink.Threshold, 0f, 1f) || Bad(Wink.Range, 0.01f, 2f) || Bad(Wink.Strength, 0f, 1f)) return "wink.threshold/range/strength out of range";

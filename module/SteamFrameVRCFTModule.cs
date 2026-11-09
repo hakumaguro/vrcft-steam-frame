@@ -24,7 +24,16 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
     private static readonly string TracePath = Path.Combine(Path.GetTempPath(), "steamframe-trace.csv");
     private static readonly string LogPath = Path.Combine(Path.GetTempPath(), "steamframe-module.log");
     private static readonly string StatusPath = Path.Combine(Path.GetTempPath(), "steamframe-status.json");
+    /// <summary>tools/tune.py touches this file every second while it needs samples. The trace runs while it is fresh,
+    /// so a tool that is killed cannot leave tracing on (the old way edited the config and could leave it stuck on).</summary>
+    private static readonly string TraceHeartbeatPath = Path.Combine(Path.GetTempPath(), "steamframe-trace.on");
     private const long MaxLogBytes = 1_000_000, MaxTraceBytes = 20_000_000;
+    private const long TraceHeartbeatMs = 3000;
+    /// <summary>A gap in the eye data shorter than this is counted as a dropout instead of logged as "no eye data".</summary>
+    private const long ShortGapMs = 5000;
+    /// <summary>New gaze values per second in this band, most with both eyes open, mean slowed eye cameras (15/s seen
+    /// on SteamOS 0.5.7+). Normal: 45 at SteamOS 0.5.8's default, ~87 at 90; not worn: 0-2, or ~32 of noise.</summary>
+    private const double SlowRateMin = 5, SlowRateMax = 25;
 
     /// <summary>Append to a file, moving it to *.old once it passes maxBytes so it never grows without limit.</summary>
     private static void AppendCapped(string path, string text, long maxBytes)
@@ -40,9 +49,23 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
 
     private static void FileLog(string m) => AppendCapped(LogPath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {m}{Environment.NewLine}", MaxLogBytes);
 
-    private string _source = "", _lids = "none";
+    private string _source = "", _lids = "none", _loggedSource = "";
     private int _lidsIdentical;
     private long _lastStatus;
+    private bool _tracing;
+    // data gaps: "none" is logged only once it lasts ShortGapMs; shorter gaps are counted
+    private long _noneSince;
+    private bool _noneLogged;
+    private readonly Queue<long> _dropouts = new();
+    private int _dropoutsUnlogged;
+    private long _lastDropoutLog;
+    // eye-camera rate, from the number of new gaze values per second while Steam Link data flows
+    private readonly Queue<(double all, double open)> _rates = new();
+    private long _rateChanges, _rateChangesOpen, _rateTicks;
+    private double? _eyeRate;
+    private bool _eyeRateSlow;
+    /// <summary>Last message logged per topic, so a state that comes back after a short gap is not logged again.</summary>
+    private readonly Dictionary<string, string> _logged = new();
     private string _startError = "";
     private string _configError = "";
     private bool _neutralSent;
@@ -56,6 +79,12 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
     private ModuleConfig _cfg = new();
 
     private readonly LidPipeline _lidsFrame = new(), _lidsSteam = new();
+    // learned open level for SteamVR's eyelids, saved next to the config so the next start begins from it
+    private readonly OpenLevelLearner _learn = new();
+    private string _learnPath = "steamframe-learned.json";
+    private (float?, float?) _seenOpen;
+    private long _lastGazeChanges = -1, _lastLearnSave;
+    private float _loggedOpenL, _loggedOpenR;
 
     public override (bool SupportsEye, bool SupportsExpression) Supported => (true, false);
 
@@ -73,7 +102,13 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
 
         var loc = System.Reflection.Assembly.GetExecutingAssembly().Location;
         _cfgPath = Path.Combine(string.IsNullOrEmpty(loc) ? "." : Path.GetDirectoryName(loc) ?? ".", "steamframe-config.json");
+        _learnPath = Path.Combine(Path.GetDirectoryName(_cfgPath) ?? ".", "steamframe-learned.json");
         ReloadConfig(force: true);
+        _seenOpen = (_cfg.SteamVrLid.LeftOpen, _cfg.SteamVrLid.RightOpen);
+        if (_learn.Load(_learnPath)) FileLog(FormattableString.Invariant($"open eyelid level from the last wear: L {_learn.OpenL:F2} R {_learn.OpenR:F2}"));
+        else SeedFromConfig("no learned level yet");
+        if (_learn.OpenL == null)
+            FileLog("no learned or calibrated open eyelid level yet: the first ~25 s of wear use the old self-adjusting levels, then the learned one");
 
         // Each source is optional: the module works as long as at least one port can be opened.
         try { _frame = new OscReceiver(Logger, FramePort, System.Net.IPAddress.Any); FileLog($"listening on 0.0.0.0:{FramePort} (frameeyeosc)"); }
@@ -98,6 +133,14 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
         return (true, false);
     }
 
+    private void SeedFromConfig(string why)
+    {
+        if (_cfg.SteamVrLid.LeftOpen is not float l || _cfg.SteamVrLid.RightOpen is not float r) return;
+        if (l < OpenLevelLearner.MinLevel || r < OpenLevelLearner.MinLevel) return;
+        _learn.Seed(l, r);
+        FileLog(FormattableString.Invariant($"open eyelid level seeded from the config ({why}): L {l:F2} R {r:F2}"));
+    }
+
     private void ReloadConfig(bool force = false)
     {
         try
@@ -116,6 +159,9 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
             }
             _cfg = next;
             _configError = "";
+            // a calibration wrote new open levels: start learning from them
+            var open = (next.SteamVrLid.LeftOpen, next.SteamVrLid.RightOpen);
+            if (!force && open != _seenOpen) { _seenOpen = open; SeedFromConfig("new calibrated levels"); }
             _cfgStamp = File.Exists(_cfgPath) ? File.GetLastWriteTimeUtc(_cfgPath) : DateTime.MinValue;
             FileLog("config loaded");
         }
@@ -126,19 +172,19 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
     {
         Thread.Sleep(10);
         long t0 = Environment.TickCount64;
-        if (t0 - _lastCfgCheck > 1000) { _lastCfgCheck = t0; ReloadConfig(); }
+        if (t0 - _lastCfgCheck > 1000) { _lastCfgCheck = t0; ReloadConfig(); _tracing = _cfg.Trace || TraceRequested(); }
         WriteStatus(t0);
         if (Status != ModuleState.Active || (_osc == null && _frame == null)) return;
 
         if (_frame != null && t0 - _frame.LastAnyTicks < 500 && FrameActive(out var f))
         {
-            SetSource("frameeyeosc");
+            SetSource("frameeyeosc", t0);
             SetLids("frameeyeosc");
             UpdateFromFrame(f, t0);
             return;
         }
         bool steamLinkFresh = _osc != null && _osc.LastPacketTicks != 0 && t0 - _osc.LastPacketTicks < 1000;
-        SetSource(steamLinkFresh ? "steamlink" : "none");
+        SetSource(steamLinkFresh ? "steamlink" : "none", t0);
         if (steamLinkFresh) { _neutralSent = false; UpdateFromSteamLink(t0); }
         else { SetLids("none"); SetNeutralEyes(); }
     }
@@ -162,7 +208,7 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
         e.Left.PupilDiameter_MM = 5f; e.Right.PupilDiameter_MM = 5f;   // unsupported, but must be set
         e._maxDilation = 10; e._minDilation = 0;
 
-        if (c.Trace && nowMs - _lastTrace >= 30)   // off by default; tools/tune.py switches it on while it needs samples
+        if (_tracing && nowMs - _lastTrace >= 30)   // off by default; tools/tune.py switches it on while it needs samples
         {
             _lastTrace = nowMs;
             // invariant culture: with a decimal comma the CSV would gain extra columns and tune.py would misread it
@@ -194,13 +240,24 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
             // SteamVR sends closedness per eye (0 open .. 1 closed, already 0 when closed), so only the open level adapts.
             float ol = 1f - osc.ClosedL, or = 1f - osc.ClosedR;
             if (c.SwapEyes) (ol, or) = (or, ol);
+            // Learn the open level from new camera frames only: SteamVR repeats the last value in between, and a headset
+            // that is not worn sends the same values over and over.
+            bool learn = c.SteamVrLid.LearnOpen ?? true;
+            long changes = Interlocked.Read(ref osc.GazeChanges);
+            if (learn && changes != _lastGazeChanges && _lastGazeChanges >= 0)
+            {
+                _learn.TauMs = c.SteamVrLid.LearnMinutes * 60_000.0;
+                _learn.Add(ol, or, nowMs);
+            }
+            _lastGazeChanges = changes;
             // No glitch rule here: on this scale an open eye reads exactly 1.0 during a normal wink.
-            (mol, mor) = _lidsSteam.Process(ol, or, c, c.SteamVrLid, maxFloor: 0f, glitchRule: false, nowMs);
+            (mol, mor) = _lidsSteam.Process(ol, or, c, c.SteamVrLid, maxFloor: 0f, glitchRule: false, nowMs,
+                learn ? _learn.OpenL : null, learn ? _learn.OpenR : null);
             // The length of the gaze point is no sign of closed eyes here: it is the distance the eyes converge at, and it
             // is below CollapsedGazeMag for most of the time while looking at something near.
             holdGaze = _lidsSteam.LinearL < 0.5f && _lidsSteam.LinearR < 0.5f;   // before the squint/sleepy curve
             NoteLidsIdentical(osc.LidsIdentical);
-            if (c.Trace && nowMs - _lastTrace >= 30)
+            if (_tracing && nowMs - _lastTrace >= 30)
             {
                 _lastTrace = nowMs;
                 float tx = _gx / GazeUnit, ty = _gy / GazeUnit;   // same columns and units as the FRAME rows
@@ -255,17 +312,95 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
 
     // ---- status for tools/tune.py doctor ---------------------------------------------------------------
 
-    private void SetSource(string s)
+    /// <summary>True while tools/tune.py keeps the heartbeat file fresh.</summary>
+    private static bool TraceRequested()
+    {
+        try
+        {
+            var fi = new FileInfo(TraceHeartbeatPath);
+            return fi.Exists && (DateTime.UtcNow - fi.LastWriteTimeUtc).TotalMilliseconds < TraceHeartbeatMs;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>Log a message for a topic unless it is the same as the last one logged for that topic.</summary>
+    private void LogOnce(string topic, string msg)
+    {
+        if (_logged.TryGetValue(topic, out var last) && last == msg) return;
+        _logged[topic] = msg;
+        FileLog(msg);
+    }
+
+    private void SetSource(string s, long now)
     {
         if (s == _source) return;
+        string prev = _source;
         _source = s;
-        if (s != "none") _neutralSent = false;
-        FileLog(s switch
+        if (s == "none")
         {
-            "frameeyeosc" => "eye data: frameeyeosc (per-eye gaze and eyelids)",
-            "steamlink" => "eye data: Steam Link (no frameeyeosc data)",
-            _ => "eye data: none (headset off, or nothing is sending)",
-        });
+            // logged by NoteGap only if it lasts: Steam Link over Wi-Fi often drops out for a second or two
+            _noneSince = now; _noneLogged = false;
+            return;
+        }
+        _neutralSent = false;
+        if (prev == "none" && !_noneLogged && _loggedSource != "") { _dropouts.Enqueue(now); _dropoutsUnlogged++; }
+        if (s == _loggedSource) return;
+        _loggedSource = s;
+        FileLog(s == "frameeyeosc" ? "eye data: frameeyeosc (per-eye gaze and eyelids)" : "eye data: Steam Link (no frameeyeosc data)");
+    }
+
+    /// <summary>Once a second: log a gap that has lasted, and summarise short dropouts once a minute.</summary>
+    private void NoteGap(long now)
+    {
+        if (_source == "none" && !_noneLogged && now - _noneSince >= ShortGapMs)
+        {
+            _noneLogged = true;
+            if (_loggedSource != "none")
+            {
+                _loggedSource = "none";
+                FileLog("eye data: none (headset off, or nothing is sending)");
+                _logged.Remove("lids"); _logged.Remove("dominant");   // log them again when the data comes back
+            }
+        }
+        while (_dropouts.Count > 0 && now - _dropouts.Peek() > 60_000) _dropouts.Dequeue();
+        if (_dropoutsUnlogged > 0 && now - _lastDropoutLog >= 60_000)
+        {
+            _lastDropoutLog = now;
+            FileLog($"eye data dropped out {_dropoutsUnlogged} time(s) for under {ShortGapMs / 1000} s since the last note");
+            _dropoutsUnlogged = 0;
+        }
+    }
+
+    /// <summary>Once a second: new gaze values per second over the last 10 s of Steam Link data.</summary>
+    private void NoteEyeRate(long now)
+    {
+        if (_osc == null || _source != "steamlink")
+        {
+            _rates.Clear(); _rateTicks = 0; _eyeRate = null;
+            return;
+        }
+        long all = Interlocked.Read(ref _osc.GazeChanges), open = Interlocked.Read(ref _osc.GazeChangesOpen);
+        if (_rateTicks != 0 && now > _rateTicks)
+        {
+            double secs = (now - _rateTicks) / 1000.0;
+            _rates.Enqueue(((all - _rateChanges) / secs, (open - _rateChangesOpen) / secs));
+            while (_rates.Count > 10) _rates.Dequeue();
+        }
+        _rateChanges = all; _rateChangesOpen = open; _rateTicks = now;
+        if (_rates.Count < 10) return;
+        var sorted = _rates.Select(r => r.all).OrderBy(r => r).ToArray();
+        _eyeRate = Math.Round((sorted[4] + sorted[5]) / 2, 1);   // median of the last 10 seconds
+        // Judged per second, with hysteresis: an average would pass through the slow band whenever the rate changes
+        // (putting the headset on or off), so a single changing second must not count. A second counts as slow only
+        // while most of its new values have both eyes open: a headset that is not worn sends changing noise with an
+        // eye "closed" most of the time (2026-11-09: 32 a second, a third with both eyes open).
+        int inBand = _rates.Count(r => r.all >= SlowRateMin && r.all < SlowRateMax && r.open >= 0.6 * r.all);
+        bool slow = _eyeRateSlow ? inBand > 2 : inBand >= 8;
+        if (slow == _eyeRateSlow) return;
+        _eyeRateSlow = slow;
+        FileLog(slow
+            ? $"eye data is slow: {_eyeRate} new values a second (normal is 40-90); SteamVR may have slowed the eye cameras (eyeTrackingRateMin)"
+            : $"eye data is no longer slow (now {_eyeRate} new values a second)");
     }
 
     /// <summary>Where the eyelids come from: frameeyeosc, steamvr (per eye, sent by SteamVR), guessed, none.</summary>
@@ -275,16 +410,16 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
         _lids = s;
         if (s == "steamvr") _lidsSteam.Reset(); else if (s == "frameeyeosc") _lidsFrame.Reset();
         if (s != "steamvr") _lidsIdentical = 0;
-        if (s == "steamvr") FileLog("eyelids: per eye, from SteamVR");
-        else if (s == "guessed") FileLog("eyelids: guessed from the gaze (SteamVR sends no eyelid values; that needs SteamVR 2.18.2 and SteamOS 0.4.3)");
+        if (s == "steamvr") LogOnce("lids", "eyelids: per eye, from SteamVR");
+        else if (s == "guessed") LogOnce("lids", "eyelids: guessed from the gaze (SteamVR sends no eyelid values; that needs SteamVR 2.18 and SteamOS 0.4.3)");
     }
 
     private void NoteLidsIdentical(int state)
     {
         if (state == _lidsIdentical) return;
         _lidsIdentical = state;
-        if (state == 1) FileLog("both eyelids carry the same value: \"Track Dominant Eye Only\" seems to be on in the headset, so winks are not possible");
-        else if (state == 2) FileLog("the eyelids differ per eye (\"Track Dominant Eye Only\" is off)");
+        if (state == 1) LogOnce("dominant", "both eyelids carry the same value: \"Track Dominant Eye Only\" seems to be on in the headset, so winks are not possible");
+        else if (state == 2) LogOnce("dominant", "the eyelids differ per eye (\"Track Dominant Eye Only\" is off)");
     }
 
     /// <summary>Small JSON snapshot (once a second) so the doctor can tell whether data is flowing without a trace.</summary>
@@ -292,6 +427,9 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
     {
         if (!force && now - _lastStatus < 1000) return;
         _lastStatus = now;
+        NoteGap(now);
+        NoteEyeRate(now);
+        if (_learn.Dirty && now - _lastLearnSave >= 60_000) SaveLearned(now);
         static long Age(long now, long t) => t == 0 ? -1 : now - t;
         var status = new Dictionary<string, object?>
         {
@@ -304,7 +442,14 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
             ["steamLinkAgeMs"] = _osc == null ? -1 : Age(now, _osc.LastPacketTicks),
             ["lids"] = _lids,
             ["dominantEyeOnly"] = _lids != "steamvr" || _lidsIdentical == 0 ? null : _lidsIdentical == 1,
-            ["trace"] = _cfg.Trace,
+            ["eyeRate"] = _eyeRate,
+            ["eyeRateSlow"] = _eyeRateSlow && _eyeRate != null,
+            ["dropoutsLastMin"] = _dropouts.Count,
+            ["openFrom"] = _lids != "steamvr" ? null
+                : (_cfg.SteamVrLid.LearnOpen ?? true) && _learn.OpenL != null ? "learned"
+                : _cfg.SteamVrLid.LeftOpen != null ? "calibrated" : "adaptive",
+            ["learnedOpen"] = _learn.OpenL is float lo && _learn.OpenR is float ro ? new[] { MathF.Round(lo, 3), MathF.Round(ro, 3) } : null,
+            ["trace"] = _tracing,
             ["config"] = _cfgPath,
             ["startError"] = _startError,
             ["configError"] = _configError,
@@ -312,5 +457,20 @@ public class SteamFrameVRCFTModule : ExtTrackingModule
         try { File.WriteAllText(StatusPath, System.Text.Json.JsonSerializer.Serialize(status)); } catch { }
     }
 
-    public override void Teardown() { _osc?.Dispose(); _frame?.Dispose(); }
+    private void SaveLearned(long now)
+    {
+        _lastLearnSave = now;
+        _learn.Save(_learnPath);
+        if (_learn.OpenL is float l && _learn.OpenR is float r && (MathF.Abs(l - _loggedOpenL) >= 0.02f || MathF.Abs(r - _loggedOpenR) >= 0.02f))
+        {
+            _loggedOpenL = l; _loggedOpenR = r;
+            FileLog(FormattableString.Invariant($"learned open eyelid level: L {l:F2} R {r:F2}"));
+        }
+    }
+
+    public override void Teardown()
+    {
+        if (_learn.Dirty) SaveLearned(Environment.TickCount64);
+        _osc?.Dispose(); _frame?.Dispose();
+    }
 }

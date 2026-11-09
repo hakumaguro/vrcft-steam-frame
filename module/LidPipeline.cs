@@ -139,14 +139,26 @@ public sealed class LidPipeline
         return true;
     }
 
+    private static (float? closed, float? open) Levels(float? closed, float? open, float? learned, float maxFloor)
+    {
+        if (learned is not float lo) return (closed, open);
+        float? c = closed ?? (maxFloor == 0f ? 0f : null);
+        return c is float fc && lo - fc > 0.05f ? (fc, lo) : (closed, open);
+    }
+
     /// <param name="levels">Fixed closed/open raw levels per eye; an eye without both adapts.</param>
     /// <param name="maxFloor">Upper limit of the adaptive closed level (0 when the source already reports closed as 0).</param>
     /// <param name="glitchRule">Apply <see cref="ModuleConfig.BlinkConfig.SaturatedRaw"/> (only true for sources where an open
     /// eye does not normally read 1.0).</param>
-    public (float L, float R) Process(float rawL, float rawR, ModuleConfig c, ModuleConfig.LidLevels levels, float maxFloor, bool glitchRule, long nowMs)
+    /// <param name="learnedOpenL">Learned open level (<see cref="OpenLevelLearner"/>); replaces the configured one. The
+    /// closed level is then the configured one, or 0 on a source that reads closed as 0 (maxFloor 0).</param>
+    public (float L, float R) Process(float rawL, float rawR, ModuleConfig c, ModuleConfig.LidLevels levels, float maxFloor, bool glitchRule, long nowMs,
+        float? learnedOpenL = null, float? learnedOpenR = null)
     {
-        float mol = L.Map(rawL, c.Lid, levels.LeftClosed, levels.LeftOpen, maxFloor);
-        float mor = R.Map(rawR, c.Lid, levels.RightClosed, levels.RightOpen, maxFloor);
+        (float? cl, float? ol) = Levels(levels.LeftClosed, levels.LeftOpen, learnedOpenL, maxFloor);
+        (float? cr, float? or) = Levels(levels.RightClosed, levels.RightOpen, learnedOpenR, maxFloor);
+        float mol = L.Map(rawL, c.Lid, cl, ol, maxFloor);
+        float mor = R.Map(rawR, c.Lid, cr, or, maxFloor);
         float dt = _lastTick == 0 ? 0.01f : Math.Min((nowMs - _lastTick) / 1000f, 0.1f);
         _lastTick = nowMs;
         if (levels.Filter) { mol = L.Smooth(mol, dt, levels); mor = R.Smooth(mor, dt, levels); }

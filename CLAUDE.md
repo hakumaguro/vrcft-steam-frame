@@ -3,6 +3,99 @@
 Eye tracking for the Steam Frame in VRChat via VRCFaceTracking (VRCFT). Read `README.md` for the user-facing docs and
 `CLAUDE.local.md` (git-ignored, if present) for machine-specific details (headset address, SSH key, paths).
 
+## Direction (agreed with the user, 2026-11-09)
+
+- Priorities: **easy to use and stable** first; more expressions only if they need no risky setup.
+- Default path = PC + SteamVR's own eye data only. No headset install, no manual calibration. The headset part
+  (frameeyeosc) stays as an **advanced, optional** menu (existing v0.2.2 users still run it); not removed.
+- Widen / squint / pupils / brows: parked. They need the eye-camera buffers on the headset (`dsp_service`, undocumented),
+  as in sasaken1102r/frameeyeosc (vision on top of Valve's lids) or Project-Babble/Babble-Frame-Runtime (NN replaces
+  Valve's lids). Revisit only after an A/B in the mirror shows clear value; then accept their output as an extra input
+  and keep our blink/wink rules.
+- Plan, in order: (1) measure once on SteamOS 0.5.8 beta (`tune.py record --gaze`, user in the headset): lopsided blinks
+  still there? Valve's gaze error vs the dot? open-level stability? Also: status `eyeRate` >= 40 while worn and no "eye
+  data is slow" log line (the 8-35/s band comes from a 2026-10-02 capture; if 0.5.8 gives fewer new values, retune it
+  before shipping the warning). And a click through the new menu (2, then A, B). (2) zero-calibration eyelids: learn each eye's
+  relaxed-open level (robust statistic, warm-up, slow follow, saved and used as the seed next wear); keep the wink/blink
+  settings; validate on the old sessions (learned levels within ~0.05 of the calibrated ones, blink/wink not worse);
+  spoken calibration becomes an optional "tune winks" tool. (3) stability (done, below). Then v0.3: merge
+  `steamvr-eyelids`, remove the README beta box, release after the user's check in VRChat.
+- Release gate: SteamVR 2.18 reached stable on 2026-10-21 with eye openness over OSC (web, not yet checked by us on the
+  public branch: `lids=steamvr` there is the test). Valve says lids will also come through the OpenVR SDK later: then the
+  Steam Link OSC port setup could go away.
+- Day state: headset SteamOS 0.5.8 beta (build 20261106), PC SteamVR beta 2.19.2 (build 26496310). This morning's log
+  showed per-eye lids from SteamVR working on these versions.
+
+## Stage 2: learned open level (2026-11-09, uncommitted, deployed; not yet checked by the user in VRChat)
+
+- `module/OpenLevelLearner.cs` (no VRCFT types; in the replay project too): per eye a 200-bin histogram of raw values,
+  only new camera frames (gaze changed) with both eyes >= 0.45, decayed with `learnMinutes` (10) of **worn** time
+  (no forgetting over gaps), 20 s warm-up after a 5 s gap, after a >= 5 min break the old weight is capped to a seed
+  (1500 samples ~ 30 s) so a new wear takes over in ~1-2 min; level = **p40**, moves <= 0.02/s, clamp 0.5..1.
+  Saved to `steamframe-learned.json` next to the config once a minute (and on Teardown); loaded as the seed at start,
+  else the config's `steamVrLid.left/rightOpen`; a config change of those (calibration) reseeds.
+- `steamVrLid.learnOpen` (null = on for SteamVR's lids, off for frameeyeosc), `learnMinutes`. `LidPipeline.Process`
+  takes the learned levels (closed = configured or 0). Status `openFrom` (learned / calibrated / adaptive),
+  `learnedOpen`; doctor prints it. With learning off or no level yet, the old code path runs unchanged.
+- Why p40, not the median (replay `sweep` over fixed levels): left winks hardly depend on the levels; right winks depend
+  on the LEFT open level (the left eye squints during a right wink): 20261109-122256 L open 0.70 / 0.775 / 0.85 ->
+  right wink 61 / 48 / 25 %. So err low. Natural wear (trace 04:51-05:44, 0.5.8, gaze median -11 deg, so maybe not
+  typical) gives p40 L 0.73 / R 0.92, p50 L 0.82 / R 0.97, vs that day's calibration L 0.79 / R 0.89. Replaying today's two
+  sessions with the p40 levels: right wink 45 -> 60 % and 52 -> 54 %, left wink 68 -> 68 % and 78 -> 74 %, blinks same.
+  Replay modes added: `learn`, `sweep`, `learnsynth` (sessions/20261009-squint-dev/replay; `LEARN_Q` env = percentile).
+  Caveat: comparing learner runs on 80 s sessions mostly measures the warm-up (the first wink_right of 122256 falls
+  before the learner has a level), not the level.
+- Slow-camera warning fixed after a live false alarm: a headset that is not worn sends changing noise (~32/s, one eye
+  "closed"). Now band 5-25/s on all changes AND >= 60 % of them with both eyes open (`GazeChangesOpen`).
+- Rollback: `sessions/20261109-learn-open/SteamFrameVRCFTModule-before-learn.dll` (+ config copy), or set
+  `steamVrLid.learnOpen` false (hot reload).
+- Evening check (2026-11-09, ~7 min worn): learned L 0.95 / R 1.00 (rose from the 0.88 / 0.81 seed in ~4 min; tonight
+  open eyes read raw 1.00 flat, so p40 = 1.0 is right). `live_check.py winks`: right wink 90 % (best so far; left eye raw
+  0.24, held open by wink assist), left wink 42 % + 21 % both closed (tracker noisy: raw L jumps 0 <-> 0.8, raw R 0.4 <-> 1.0
+  inside the hold), blinks 3/3 both eyes. Open steps right after a wink read out 0.57-0.62 (raw 0.76-0.83): reopening
+  late or a sleepy look; ask the mirror.
+- To do: the user wears it 3+ min in VRChat, then status `learnedOpen` and `sessions/20261009-squint-dev/live_check.py
+  winks` (compare 76 / 72 % from 10-09 and today's 0.80 / 0.60-0.68) and the mirror. The fake-stream test (fake9015.py)
+  was not re-run after the slow-band change (the headset was sending). tune.py still writes leftOpen/rightOpen on
+  `--apply` (they become the seed); the spoken calibration is now optional ("tune winks").
+
+## Stage 1 measured on SteamOS 0.5.8 beta + SteamVR 2.19.2 beta (2026-11-09)
+
+- Sessions `20261109-121919` (dot covered by the meter, gaze rows useless) and `20261109-122256` (`--no-meter`, dot seen).
+- Eye service on the headset: shm v5, same size; the sequence counter runs at **45/s** (was ~90), no `eyeTrackingRateMin`
+  in the headset's steamvr.vrsettings, so it is the new default. Module `eyeRate` 44-45 while worn, not flagged (good).
+- Lopsided blinks: 2 of 6 and 1 of 7 (96 ms) vs 10 of 11 on 2026-10-09: Valve's self-calibration probably helped.
+  Winks OK in both sessions (left: other eye 0.80-0.81; right: other eye 0.60-0.68).
+- Open levels: L 0.79 / 0.78, R 0.88 / 0.89 today vs L 0.898 / R 0.787 on 10-09 (the more open eye swapped sides):
+  fixed levels go stale between days, stable within a day -> stage 2 (learn the open level) is worth it.
+- Gaze vs the dot (`122256`): 4.7 deg (3.5 without the first late "left" step), offset correction 4.4, offset+gain 6.3,
+  jitter 1.6, vertical gain ~1.2. Same as October: **no gaze correction / no dot calibration needed**. The analyzer's
+  "not reliable" line came from the repeat difference (3.8, the late first "left").
+- Bug found: during `record --gaze` the eyelid meter (centre, 2 m) covered the dot (3 m), so the user saw no dot.
+  `Meter.pause()` now hides it during gaze steps (record loop). The "dot visible" test: all three overlays seen alone.
+- frameeyeosc on the headset was found enabled and running, sending to the user's second PC.
+  Turned off on request with `setup.ps1 -Headset ... -HeadsetOff -Yes`: the first end-to-end run of that path; it
+  worked (disabled, inactive, files kept), the PC part changed only module.json, the three settings files unchanged.
+
+## Stability changes (2026-11-09, uncommitted, deployed)
+
+- Trace: `tune.py` (`Tracing`) no longer edits the config; it touches `%TEMP%\steamframe-trace.on` every second and the
+  module traces while that file is < 3 s old (or config `trace` is true, by hand). Cause of the "trace always on": a
+  cut-off run left `trace: true`, and every later run "restored" it (the `.bak` had it too). The user's config was set
+  to `trace: false` (old file kept as `steamframe-config.json.before-trace-off`). `live_check.py` now uses `Tracing`.
+- Eye-camera rate: `OscReceiver.GazeChanges` counts gaze messages whose value changed (normal median 87/s, min 44, from
+  `sessions/20261002-dominant-eye/osc.csv`; SteamVR repeats values, so message counts don't show it). Status `eyeRate`
+  (median of the last 10 s) and `eyeRateSlow` (8 of 10 seconds in 8-35/s on, <= 2 off; per second because an average
+  passes through the band whenever the rate changes). Not worn reads 0-2/s, not flagged. Doctor warns, and names
+  SteamVR's `eyeTrackingRateMin` (SteamOS 0.5.7+ can run the cameras at 15/s; from sasaken's docs, not seen by us yet).
+- Data gaps: "eye data: none" is logged only after 5 s; shorter gaps are counted (`dropoutsLastMin`, a log line at most
+  once a minute) and the eyelid / dominant-eye lines are not repeated. Doctor warns at >= 3 per minute. Behaviour is
+  unchanged (neutral eyes after 1 s without data).
+- Tested with a fake 9015 stream (`fake9015.py` in that session's scratchpad: 90/15/1 changes a second, gaps, heartbeat)
+  and the doctor on hand-written status files. Not tested with the headset yet.
+- Menu: 1 setup, 2 status, 3 calibrate, 4 live view, 5 folder, 6 uninstall, S start VRCFT (the menu says when it is not
+  running), A advanced (1 headset set up, 2 `-HeadsetOff`). README, doctor and setup messages follow the new numbers.
+
 ## Current state (2026-09-27)
 
 - Latest release **v0.2.2** (2026-09-28: review fixes, calibration voice fix, pinned frameeyeosc), prebuilt-DLL zip. Working end to end on the author's setup: per-eye gaze, blinks, both
@@ -267,7 +360,8 @@ one-click entry points (`Start Here.cmd`), and short answers. They test in VRCha
 - `module/` C# (net10.0) VRCFT module, version in `SteamFrameVRCFTModule.csproj` (`<Version>`). `SteamFrameVRCFTModule.cs` (logic, status
   file, logging), `OscReceiver.cs` (UDP OSC parser), `ModuleConfig.cs` (hot-reloaded `steamframe-config.json`). Built against the installed
   VRCFT DLLs; scripts pass `-p:VrcftDir=<found install>` (the csproj default is only a fallback).
-- `Start Here.cmd` user menu (must stay CRLF): 1 setup, 2 headset, 3 status, 4 calibrate, 5 live view, 6 config folder, 7 uninstall.
+- `Start Here.cmd` user menu (must stay CRLF): 1 setup, 2 status, 3 calibrate, 4 live view, 5 config folder, 6 uninstall,
+  S start VRCFT, A advanced (headset part).
 - `tools/tune.py` calibration (`calibrate` = record+analyze+apply with speech, `record`, `analyze [--apply] [--speak]`, `watch`, `show`).
   Stdlib only, Windows. It turns the module's `trace` config flag on only while it needs samples (class `Tracing`, restores the file exactly).
 - `scripts/` (Windows PowerShell 5.1 compatible, share `common.ps1`):
@@ -359,8 +453,8 @@ first frame would turn blinks into winks. Validate new rules by replaying labell
 ## Diagnostics
 
 `%TEMP%\steamframe-status.json` (module state, 1 s; `source` = frameeyeosc / steamlink / none, port states, `startError`),
-`%TEMP%\steamframe-module.log` (state changes only, rotated to `.old` at 1 MB) and `%TEMP%\steamframe-trace.csv` (only while config
-`trace` is true; 30 ms samples `time,FRAME,lx,ly,rx,ry,rawL,rawR,outL,outR,loL,hiL,loR,hiR`, rotated at 20 MB).
+`%TEMP%\steamframe-module.log` (state changes only, rotated to `.old` at 1 MB) and `%TEMP%\steamframe-trace.csv` (only while
+`%TEMP%\steamframe-trace.on` is fresh or config `trace` is true; 30 ms samples `time,FRAME,lx,ly,rx,ry,rawL,rawR,outL,outR,loL,hiL,loR,hiR`, rotated at 20 MB).
 `tune.py record` saves labelled sessions under `sessions/` (git-ignored). Headset: `journalctl --user -u frameeyeosc`.
 
 ## Conventions

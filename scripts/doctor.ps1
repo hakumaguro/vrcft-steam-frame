@@ -42,19 +42,30 @@ if ($vrcftRunning -and $moduleProc) {
     else { Fail "the Steam Frame module is not active (status is $([int]($st.AgeMs/1000)) s old)" "The Steam Frame module is not active." "check the Modules page in VRCFaceTracking; if another module claims eye tracking, disable it" }
   } else {
     if ($st.startError) { Warn "module reports: $($st.startError)" "The module reported a start problem. See the screen." "" }
-    if ($st.configError) { Warn "$($st.configError)" "Your settings file has an error, so the previous settings are still used." "fix the file (menu 6 opens its folder) or restore steamframe-config.json.bak" }
+    if ($st.configError) { Warn "$($st.configError)" "Your settings file has an error, so the previous settings are still used." "fix the file (menu 5 opens its folder) or restore steamframe-config.json.bak" }
     switch ($st.source) {
       "frameeyeosc" { Write-Step ok "eye data from the headset (per-eye gaze and eyelids), $($st.frameAgeMs) ms old" }
       "steamlink"   {
         if ($st.lids -eq "steamvr") {
           Write-Step ok "eye data from SteamVR (per-eye eyelids, one gaze direction for both eyes), $($st.steamLinkAgeMs) ms old"
-          Write-Step info "if you set up the headset part with an older version and the headset has not been updated since, it can restart-loop on SteamOS 0.4.3+; to turn it off: setup.ps1 -Headset user@host -HeadsetOff"
+          Write-Step info "if you set up the headset part with an older version and the headset has not been updated since, it can restart-loop on SteamOS 0.4.3+; to turn it off: Start Here, A, then 2"
+          if ($st.openFrom -eq "learned" -and $st.learnedOpen) { Write-Step ok ("open eyelid level learned while you wear the headset: L {0} R {1}" -f $st.learnedOpen[0], $st.learnedOpen[1]) }
+          elseif ($st.openFrom) { Write-Step info "open eyelid level: $($st.openFrom)" }
           if ($st.dominantEyeOnly -eq $true) { Warn "both eyelids always carry the same value: 'Track Dominant Eye Only' is on in the headset, so winks are not possible" "Track Dominant Eye Only is on in the headset, so winks do not work. Turn it off in V R settings, General." "in the headset: VR Settings > General > Track Dominant Eye Only (shown with advanced settings)" }
         } else {
-          Warn "only the Steam Link gaze is arriving: eyelids are guessed" "Only the gaze is arriving. Eyelids are guessed. Update Steam V R and the headset, or set up the headset part." "update SteamVR to 2.18.2+ and SteamOS to 0.4.3+ (both beta at the time of writing), or on the headset: systemctl --user status frameeyeosc  (or run setup with -Headset)"
+          Warn "only the Steam Link gaze is arriving: eyelids are guessed" "Only the gaze is arriving. Eyelids are guessed. Update Steam V R and the headset." "update SteamVR to 2.18+ and the headset to SteamOS 0.4.3+ (both on the normal channels); the optional headset part (Start Here, A) also works with older versions"
         }
       }
       default       { Warn "no eye data at all right now" "No eye data right now. Put the headset on and check Steam Link is connected." "wear the headset / connect Steam Link; on the headset check: systemctl --user status frameeyeosc" }
+    }
+    if ($st.eyeRateSlow -eq $true) {
+      Warn "eye data is slow: $($st.eyeRate) new values a second with open eyes (normal is 40-90), so the avatar's eyes stutter. SteamVR on the headset may have slowed the eye cameras (its eyeTrackingRateMin setting, SteamOS 0.5.7+)" "Eye data is slow, so the eyes may stutter. Steam V R may have slowed the eye cameras." "restart SteamVR; if it stays slow, set the headset's SteamVR setting eyeTrackingRateMin to 90"
+    } elseif ($st.eyeRate -ne $null -and $st.source -eq "steamlink") {
+      if ($st.eyeRate -lt 5) { Write-Step info ("the eye values barely change ({0} a second): is the headset being worn?" -f $st.eyeRate) }
+      else { Write-Step ok ("eye data rate: {0} new values a second" -f $st.eyeRate) }
+    }
+    if ($st.dropoutsLastMin -ge 3) {
+      Warn "eye data dropped out $($st.dropoutsLastMin) times in the last minute (for under 5 s each)" "Eye data keeps dropping out. Check the Wi-Fi or Steam Link connection." "a weak Wi-Fi link or a busy network; the PC on a cable and the headset close to the router or the Frame's adapter help"
     }
     Write-Step info ("module {0}; frameeyeosc port {1}, Steam Link port {2}" -f $st.version,
       $(if ($st.frameListening) { "open" } else { "CLOSED" }), $(if ($st.steamLinkListening) { "open" } else { "CLOSED" }))

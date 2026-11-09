@@ -281,7 +281,7 @@ if ($Headset) {
     & ssh @sshOpts -o BatchMode=yes $Headset 'sed -i s/\r$// ~/steamframe/*'
     if ($HeadsetOff) {
       & ssh @sshOpts -o BatchMode=yes $Headset "bash ~/steamframe/headset-install.sh --off"
-      if ($LASTEXITCODE -eq 0) { Write-Step done "headset: frameeyeosc is off; the PC now uses SteamVR's eye data (run menu 2 again to turn it back on)"; $changed += "headset service off" }
+      if ($LASTEXITCODE -eq 0) { Write-Step done "headset: frameeyeosc is off; the PC now uses SteamVR's eye data (Start Here: A, then 1 turns it back on)"; $changed += "headset service off" }
       else { Write-Step fail "could not turn frameeyeosc off (see the output above)" }
     } else {
     $info = & ssh @sshOpts -o BatchMode=yes $Headset "bash ~/steamframe/headset-install.sh --info"
