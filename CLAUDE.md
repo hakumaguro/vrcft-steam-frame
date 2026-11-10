@@ -42,7 +42,9 @@ Eye tracking for the Steam Frame in VRChat via VRCFaceTracking (VRCFT). Read `RE
   end to end. Password path unchanged code, not tested (needs a typed password). Mirror check 2026-11-10 14:00 (VRChat running, stable SteamVR): 4 right-wink attempts with
   VRChat window captures (`scratchpad/wink_mirror.py`; `tools/capture.ps1` works, the window shows the third-person camera
   and the in-world mirror): right-only closed 64 / 70 / 96 / 86 % of the hold (earlier runs 36 / 15 % were bad attempts,
-  the tracker held the left lid at raw 0.5), left eye shown 0.68-0.89 open; screenshots show a clean wink, other eye open. The user confirmed the avatar's RIGHT eye closed when winking right. Menu A / B / Q driven with keystrokes through cmd (stdin): Advanced screen shows, B returns to the main menu, Q exits 0.
+  the tracker held the left lid at raw 0.5), left eye shown 0.68-0.89 open; screenshots show a clean wink, other eye open. The user confirmed the avatar's RIGHT eye closed when winking right. Menu A / B / Q driven with keystrokes through cmd (stdin): Advanced screen shows, B returns to the main menu, Q exits 0. SSH password path tested on the real headset
+  (throwaway key, real PowerShell window, user typed the password): accepted, login works, `-HeadsetOff` ran, key
+  removed again. All three setup login paths (reuse, password, failure text) are now verified.
 - v0.3.0 was released 2026-11-10 (https://github.com/hakumaguro/vrcft-steam-frame/releases/tag/v0.3.0).
 
 ## v0.3.0 prep (2026-11-09/10; merged to master and released as v0.3.0 on 2026-11-10)
@@ -471,6 +473,11 @@ first frame would turn blinks into winks. Validate new rules by replaying labell
   **Always restore 9000 and restart frameeyeosc afterwards**, otherwise VRChat gets no eye data.
 
 ## Pitfalls
+
+- The headset runs OpenSSH 10.x, which refuses a source address for a minute or so after several failed logins in a row
+  (PerSourcePenalties): "Connection closed by <ip> port 22" / "banner exchange" before any password prompt. Seen 2026-11-10
+  when a test script made 3 extra failing probes on top of setup's own 2. Wait ~3 minutes; when testing, do not probe with
+  keys that are expected to fail. (Possible later hint in setup.ps1 for "Connection closed": wait and retry.)
 
 - **Start VRCFT through Steam** (`steam://rungameid/3329480`). Launching `VRCFaceTracking.exe` directly never spawns the module process.
 - VRCFT's **Module Registry page crashes the whole app** (WinUI `0xc000027b`, stowed E_INVALIDARG) if any installed module's `module.json`
