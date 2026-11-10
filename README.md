@@ -1,3 +1,5 @@
+**English** | [ไทย](README.th.md) | [日本語](README.ja.md) | [简体中文](README.zh-CN.md)
+
 # vrcft-steam-frame
 
 Eye tracking for the **Steam Frame** in **VRChat**, through [VRCFaceTracking](https://docs.vrcft.io/) (VRCFT):
