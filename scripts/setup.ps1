@@ -265,18 +265,36 @@ if ($Headset) {
     else { ssh-keygen -q -t ed25519 -f $KeyFile -N '""' -C "vrcft-steam-frame"; Write-Step done "SSH key created: $KeyFile" }
   }
   $keyOk = $false
-  if (Test-Path $KeyFile) { & ssh @sshOpts -o BatchMode=yes $Headset "true" 2>$null; $keyOk = ($LASTEXITCODE -eq 0) }
+  $sshErr = ""
+  if (Test-Path $KeyFile) { $sshErr = (& ssh @sshOpts -o BatchMode=yes $Headset "true" 2>&1 | ForEach-Object { "$_" } | Out-String); $keyOk = ($LASTEXITCODE -eq 0) }
   if (-not $keyOk -and -not $DryRun) {
-    Write-Step info "authorising the key on the headset: enter the headset password when asked (one time only)"
-    # The key goes in the command line, not through stdin: with stdin piped, Windows OpenSSH cannot read the password.
-    # Password auth is forced so other keys in the agent cannot use up the server's attempts first.
     $pubKey = (Get-Content "$KeyFile.pub" -TotalCount 1).Trim()
-    & ssh -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new -o PubkeyAuthentication=no $Headset "mkdir -p ~/.ssh && chmod 700 ~/.ssh && { grep -qsF '$pubKey' ~/.ssh/authorized_keys || echo '$pubKey' >> ~/.ssh/authorized_keys; } && chmod 600 ~/.ssh/authorized_keys"
-    & ssh @sshOpts -o BatchMode=yes $Headset "true" 2>$null; $keyOk = ($LASTEXITCODE -eq 0)
+    $authCmd = "mkdir -p ~/.ssh && chmod 700 ~/.ssh && { grep -qsF '$pubKey' ~/.ssh/authorized_keys || echo '$pubKey' >> ~/.ssh/authorized_keys; } && chmod 600 ~/.ssh/authorized_keys"
+    # First try a login that already works (your own key or ssh agent, no password needed): headsets that accept only a
+    # key, or have no account password, cannot use the password step below (GitHub issue #1).
+    & ssh -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new -o BatchMode=yes $Headset $authCmd 2>$null
+    if ($LASTEXITCODE -eq 0) { Write-Step info "authorised the key through your existing SSH login (no password needed)" }
+    else {
+      Write-Step info "authorising the key on the headset: enter the headset password when asked (one time only)"
+      # The key goes in the command line, not through stdin: with stdin piped, Windows OpenSSH cannot read the password.
+      # Password auth is forced so other keys in the agent cannot use up the server's attempts first.
+      & ssh -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new -o PubkeyAuthentication=no $Headset $authCmd
+    }
+    $sshErr = (& ssh @sshOpts -o BatchMode=yes $Headset "true" 2>&1 | ForEach-Object { "$_" } | Out-String); $keyOk = ($LASTEXITCODE -eq 0)
   }
   if ($DryRun -and $HeadsetOff) { Write-Step would "stop frameeyeosc on the headset and disable its auto-start" }
   elseif ($DryRun) { Write-Step would "copy the headset scripts, build frameeyeosc, install the auto-start service" }
-  elseif (-not $keyOk) { Write-Step fail "cannot log in to $Headset with the key; is SSH enabled on the headset and the address right?" }
+  elseif (-not $keyOk) {
+    $why = ($sshErr -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -Last 1)
+    $hostOnly = ($Headset -split '@')[-1]
+    $hint = "is SSH enabled on the headset, and are the user name and address right?"
+    if ($sshErr -match "HOST IDENTIFICATION HAS CHANGED") { $hint = "the headset's SSH identity changed (reinstalled?); run: ssh-keygen -R $hostOnly   and try again" }
+    elseif ($sshErr -match "Permission denied") { $hint = "the headset refused the login: the account needs a password (set one with passwd in a terminal on the headset) and password login must be on, or add this PC's key yourself: $KeyFile.pub" }
+    elseif ($sshErr -match "refused|timed out|No route|Could not resolve") { $hint = "the headset did not answer: is SSH enabled on it, and is the address right?" }
+    Write-Step fail "cannot log in to $Headset with the key"
+    if ($why) { Write-Step info "ssh said: $why" }
+    Write-Step info $hint
+  }
   else {
     Write-Step ok "SSH login works"
     # copy the scripts first; remote commands stay free of quotes (Windows PowerShell 5.1 mangles them)

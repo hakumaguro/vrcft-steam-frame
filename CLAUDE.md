@@ -26,7 +26,18 @@ Eye tracking for the Steam Frame in VRChat via VRCFaceTracking (VRCFT). Read `RE
 - Day state: headset SteamOS 0.5.8 beta (build 20261106), PC SteamVR beta 2.19.2 (build 26496310). This morning's log
   showed per-eye lids from SteamVR working on these versions.
 
-## v0.3.0 prep (2026-11-09/10; merged to master 2026-11-10, release NOT published yet)
+## v0.3.1 (2026-11-10, committed locally, NOT pushed, NOT released)
+
+- GitHub issue #1 (halobtw, 2026-10-28): Advanced > 1 failed with "cannot log in ... with the key" although their SSH
+  works. Root cause in `setup.ps1` section 8: it tried only its own key (`IdentitiesOnly`) and authorised it with
+  `PubkeyAuthentication=no` (password only), so key-only / passwordless headsets could never pass, and the final test
+  hid ssh's stderr (`2>$null`). Fix: first authorise through the existing login (BatchMode, default keys/agent), then the
+  password; on failure print ssh's last line plus a hint (host key changed, permission denied, no answer).
+  The reply was posted on the issue (v0.3.0 needs no SSH). Failure path tested on `steamos@127.0.0.1`; the key-reuse and
+  password paths still need a run against the headset (it was off). Release notes: `dist/release-notes-0.3.1.md`.
+- v0.3.0 was released 2026-11-10 (https://github.com/hakumaguro/vrcft-steam-frame/releases/tag/v0.3.0).
+
+## v0.3.0 prep (2026-11-09/10; merged to master and released as v0.3.0 on 2026-11-10)
 
 - 2026-11-10: the user tested a full day plus a long VR-sleep session on the 0.3.0 build ("really good"), then asked
   for an audit (code-review skill, two agents) before the merge. Fixed from it: uninstall/reinstall now keep

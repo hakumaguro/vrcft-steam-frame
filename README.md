@@ -74,6 +74,8 @@ for the eyelids too, with its own calibration, so calibrate (menu **3**) after i
    stars); that is normal for SSH. Then it prints `[ok   ] SSH login works` and carries on. If you see
    `Permission denied, please try again.` the password was wrong (three tries; run **A** > **1** again to restart). If
    you never set a password on the headset, set one first with `passwd` in a terminal on the headset.
+   If you already log in to the headset with your own SSH key (or have no password set), setup uses that login to
+   authorise its key and never asks for a password. When the login fails it prints what ssh said and what to check.
 2. **A** > **2** turns it off again (stops it and its auto-start; the files stay).
 
 ## Using the headset with more than one PC
