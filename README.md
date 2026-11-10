@@ -193,7 +193,7 @@ Steam Frame (SteamOS)                                PC (Windows)
 ```
 
 Tested with Windows 11 and VRCFaceTracking 5.4.5 (Steam). SteamVR's own eyelid values: SteamOS 0.4.3 beta, 0.4.5 and
-0.5.8 beta with SteamVR 2.18.2 beta and 2.19.2 beta. frameeyeosc: SteamOS build 20260922 (eye shared-memory version 4)
+0.5.8 beta with SteamVR 2.18.2 beta, 2.19.2 beta and the stable channel (build 25998080, 2026-11-10). frameeyeosc: SteamOS build 20260922 (eye shared-memory version 4)
 and 0.4.5 (version 5, patched).
 
 ## Tuning by hand

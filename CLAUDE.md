@@ -34,7 +34,12 @@ Eye tracking for the Steam Frame in VRChat via VRCFaceTracking (VRCFT). Read `RE
   hid ssh's stderr (`2>$null`). Fix: first authorise through the existing login (BatchMode, default keys/agent), then the
   password; on failure print ssh's last line plus a hint (host key changed, permission denied, no answer).
   The reply was posted on the issue (v0.3.0 needs no SSH). Failure path tested on `steamos@127.0.0.1`; the key-reuse and
-  password paths still need a run against the headset (it was off). Release notes: `dist/release-notes-0.3.1.md`.
+  password paths still need a run against the headset (it was off). Release notes: `dist/release-notes-0.3.1.md`. 2026-11-10 afternoon: user on SteamVR **stable** (build 25998080, BetaKey public) +
+  SteamOS 0.5.8 beta: `lids=steamvr`, dominantEyeOnly false; `live_check.py winks` x2: blinks 3/3 both, left wink 67 / 94 %,
+  right wink 36 / 15 % (tracker kept the left lid at raw 0.5; known hit-and-miss). Key-reuse path tested on the real
+  headset with a throwaway key + a temporary copy of the working key as `~/.ssh/id_ed25519` (both removed afterwards,
+  the throwaway line removed from the headset's authorized_keys): "authorised ... no password needed", `-HeadsetOff` ran
+  end to end. Password path unchanged code, not tested (needs a typed password).
 - v0.3.0 was released 2026-11-10 (https://github.com/hakumaguro/vrcft-steam-frame/releases/tag/v0.3.0).
 
 ## v0.3.0 prep (2026-11-09/10; merged to master and released as v0.3.0 on 2026-11-10)
