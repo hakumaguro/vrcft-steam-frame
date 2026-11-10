@@ -23,8 +23,8 @@ headset** and no SSH is needed. With older versions use [v0.2.2](https://github.
 - **No calibration needed.** The module learns how open your eyes are while you wear the headset (it starts about 20 s
   after you put it on and settles within a few minutes) and remembers it for next time. Calibration (menu **3**) is
   now optional, for fine-tuning winks.
-- **Blinks and winks from SteamVR itself**, per eye. Better right winks (90 % of the hold in our check, was 60-72 %),
-  blinks close both eyes together.
+- **Blinks and winks from SteamVR itself**, per eye, with the open level that matches your eyes today. Right winks
+  work more often than with fixed levels, and blinks close both eyes together.
 - **Clearer health check:** the status (menu **2**) warns when the eye cameras run slow or the data keeps dropping out.
 - **Simpler menu:** the headset part moved to **A** (Advanced), with a new option to turn it off. It is not needed any more.
 - Half-closed (sleepy) eyelids can be tuned (`steamVrLid.sleepyLevel`), and calibration shows a live eyelid meter in the headset.
@@ -140,10 +140,10 @@ and `~/.cargo/bin/rustup self uninstall` for Rust.
 | You notice | Do this |
 |---|---|
 | Winking closes **both** avatar eyes | The avatar links its eyelids: open the avatar menu and turn off **Eye Sync** / "Link eyes". Also check that "Track Dominant Eye Only" is off in the headset. |
-| Status says "no eye data" | Wear the headset and connect Steam Link. If SteamVR asked whether to share eye tracking data with PC applications, allow it. Run menu **1** again (it checks that Steam Link shares eye data on port 9015). |
-| Status says "only the gaze is arriving" | Gaze works, eyelids are guessed: SteamVR sends no eyelid values. Update SteamVR (2.18.2+) and the headset (SteamOS 0.4.3+). |
+| Status says "no eye data at all right now" | Wear the headset and connect Steam Link. If SteamVR asked whether to share eye tracking data with PC applications, allow it. Run menu **1** again (it checks that Steam Link shares eye data on port 9015). |
+| Status says "only the Steam Link gaze is arriving" | Gaze works, eyelids are guessed: SteamVR sends no eyelid values. Update SteamVR (2.18.2+) and the headset (SteamOS 0.4.3+). |
 | Status says "Track Dominant Eye Only is on" | Both eyelids follow one eye, so winks cannot work. Turn it off in the headset: VR Settings > General (shown with advanced settings). |
-| Status says the eye cameras are slow | SteamVR runs the eye cameras at a low rate, so blinks can be missed. Check SteamVR's eye-tracking settings on the headset (`eyeTrackingRateMin`). |
+| Status says "eye data is slow" | SteamVR runs the eye cameras at a low rate, so blinks can be missed. Check SteamVR's eye-tracking settings on the headset (`eyeTrackingRateMin`). |
 | Eyes look half closed for the first minutes | The module is still learning your open level (it starts about 20 s after you put the headset on). If it stays like that, calibrate (menu **3**). |
 | Blinks too shallow, winks weak | Menu **3** (calibrate). Some people squint the other eye when winking; the calibration accounts for that. |
 | Status says "your settings file has an error" | The module ignored the broken `steamframe-config.json` and kept the previous settings. Fix it, restore `steamframe-config.json.bak`, or calibrate again (menu **3**). |

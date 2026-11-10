@@ -26,7 +26,18 @@ Eye tracking for the Steam Frame in VRChat via VRCFaceTracking (VRCFT). Read `RE
 - Day state: headset SteamOS 0.5.8 beta (build 20261106), PC SteamVR beta 2.19.2 (build 26496310). This morning's log
   showed per-eye lids from SteamVR working on these versions.
 
-## v0.3.0 prep (2026-11-09, committed locally on `steamvr-eyelids`, not pushed, not merged)
+## v0.3.0 prep (2026-11-09/10; merged to master 2026-11-10, release NOT published yet)
+
+- 2026-11-10: the user tested a full day plus a long VR-sleep session on the 0.3.0 build ("really good"), then asked
+  for an audit (code-review skill, two agents) before the merge. Fixed from it: uninstall/reinstall now keep
+  `steamframe-learned.json` (`disabled-modules\steamframe-learned.backup.json`, sandbox-tested), the doctor no longer
+  prints the "old headset part restart-loops" note on every run, README troubleshooting uses the doctor's exact wording,
+  the "90 %" wink claim was dropped. Left as is (not blocking): learner constants (warm-up, step, percentile) are not
+  config keys and `tune.py` does not measure the learner (checked with the replay tool instead); squint/sleepy
+  machinery is larger than 0.3 needs; learned file beats a config edited while the module is stopped (a running module
+  reseeds on a calibration); `eyeTrackingRateMin` 90 advice is from sasaken's docs only.
+- Release notes (how-to + what changed, "no manual calibration") are in `dist/release-notes-0.3.0.md` (git-ignored).
+  Publish only after: the SteamVR **stable** check below and the user's explicit go-ahead.
 
 - Version 0.3.0 (csproj + common.ps1), README rewritten for the release: no beta box, "What you need" (SteamOS 0.4.3+,
   SteamVR 2.18.2+), "New in 0.3", menu numbers fixed everywhere, headset part = Advanced, calibration optional,

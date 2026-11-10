@@ -48,7 +48,6 @@ if ($vrcftRunning -and $moduleProc) {
       "steamlink"   {
         if ($st.lids -eq "steamvr") {
           Write-Step ok "eye data from SteamVR (per-eye eyelids, one gaze direction for both eyes), $($st.steamLinkAgeMs) ms old"
-          Write-Step info "if you set up the headset part with an older version and the headset has not been updated since, it can restart-loop on SteamOS 0.4.3+; to turn it off: Start Here, A, then 2"
           if ($st.openFrom -eq "learned" -and $st.learnedOpen) { Write-Step ok ("open eyelid level learned while you wear the headset: L {0} R {1}" -f $st.learnedOpen[0], $st.learnedOpen[1]) }
           elseif ($st.openFrom) { Write-Step info "open eyelid level: $($st.openFrom)" }
           if ($st.dominantEyeOnly -eq $true) { Warn "both eyelids always carry the same value: 'Track Dominant Eye Only' is on in the headset, so winks are not possible" "Track Dominant Eye Only is on in the headset, so winks do not work. Turn it off in V R settings, General." "in the headset: VR Settings > General > Track Dominant Eye Only (shown with advanced settings)" }

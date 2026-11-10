@@ -75,6 +75,8 @@ if ($Uninstall) {
     Act "remove the Steam Frame module (calibration kept in $parked\steamframe-config.backup.json)" {
       New-Item -ItemType Directory -Force $parked | Out-Null
       if (Test-Path $cfg) { Copy-Item $cfg (Join-Path $parked "steamframe-config.backup.json") -Force }
+      $learned = Join-Path $ours.Dir "steamframe-learned.json"
+      if (Test-Path $learned) { Copy-Item $learned (Join-Path $parked "steamframe-learned.backup.json") -Force }
       Remove-Item $ours.Dir -Recurse -Force
     }
   }
@@ -212,6 +214,8 @@ if ($needVrcftRestart) {
         Copy-Item $dll $installDir -Force
         $saved = Join-Path $parked "steamframe-config.backup.json"
         if (Test-Path $saved) { Copy-Item $saved (Join-Path $installDir "steamframe-config.json"); Write-Step info "restored your earlier calibration" }
+        $savedLearned = Join-Path $parked "steamframe-learned.backup.json"
+        if (Test-Path $savedLearned) { Copy-Item $savedLearned (Join-Path $installDir "steamframe-learned.json") }
       }
     } else {
       Act "update the module DLL (calibration kept)" { Copy-Item $dll $installDir -Force }
