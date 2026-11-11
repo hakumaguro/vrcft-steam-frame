@@ -76,7 +76,7 @@ if ($out -and $out -ne "9000") { Fail "VRCFaceTracking sends OSC to port $out, V
 elseif ($out) { Write-Step ok "VRCFaceTracking sends to VRChat on port 9000" }
 
 $vr = Get-VrlinkSettings (Get-SteamVrSettingsPath)
-if (-not $vr.Ok) { Warn ("Steam Link OSC settings: port {0}, share eye data {1} (want 9015 / true)" -f $vr.Port, $vr.ShareEye) "Steam Link eye sharing is not set up. Only the fallback is affected." "run setup with SteamVR closed" }
+if (-not $vr.Ok) { Warn ("Steam Link OSC settings: OSC on {0}, face via OSC {1}, port {2}, share eye data {3} (want True / True / 9015 / True)" -f $vr.UseOsc, $vr.UseOscFace, $vr.Port, $vr.ShareEye) "Steam Link eye sharing is not set up, so Steam V R sends no eye data." "run setup with SteamVR closed, or in SteamVR: Settings > Steam Link: Enable OSC and the sharing options, then reconnect the headset" }
 else { Write-Step ok "Steam Link shares eye data on port 9015" }
 
 if ($vrcft) {

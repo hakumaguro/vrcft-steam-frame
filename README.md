@@ -144,7 +144,7 @@ and `~/.cargo/bin/rustup self uninstall` for Rust.
 | You notice | Do this |
 |---|---|
 | Winking closes **both** avatar eyes | The avatar links its eyelids: open the avatar menu and turn off **Eye Sync** / "Link eyes". Also check that "Track Dominant Eye Only" is off in the headset. |
-| Status says "no eye data at all right now" | Wear the headset and connect Steam Link. If SteamVR asked whether to share eye tracking data with PC applications, allow it. Run menu **1** again (it checks that Steam Link shares eye data on port 9015). |
+| Status says "no eye data at all right now" | Wear the headset and connect Steam Link. If SteamVR asked whether to share eye tracking data with PC applications, allow it. Close SteamVR and run menu **1** again: it turns on Steam Link's OSC output (off by default in SteamVR, and versions before 0.3.2 did not turn it on) and checks that eye data is shared on port 9015. |
 | Status says "only the Steam Link gaze is arriving" | Gaze works, eyelids are guessed: SteamVR sends no eyelid values. Update SteamVR (2.18.2+) and the headset (SteamOS 0.4.3+). |
 | Status says "Track Dominant Eye Only is on" | Both eyelids follow one eye, so winks cannot work. Turn it off in the headset: VR Settings > General (shown with advanced settings). |
 | Status says "eye data is slow" | SteamVR runs the eye cameras at a low rate, so blinks can be missed. Check SteamVR's eye-tracking settings on the headset (`eyeTrackingRateMin`). |

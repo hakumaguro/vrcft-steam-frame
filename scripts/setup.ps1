@@ -13,7 +13,7 @@
     2. gets the module: prebuilt DLL next to this script's folder, or builds it (installs a per-user .NET 10 SDK if needed, asks first)
     3. moves the stock SteamLink VRCFT module aside (it blocks UDP 9015; -Uninstall puts it back)
     4. makes VRCFaceTracking send to VRChat on port 9000
-    5. Steam Link driver: OSC output port 9015 + share eye tracking (only while SteamVR is closed; backup kept)
+    5. Steam Link driver: OSC on, OSC output port 9015 + share eye tracking (only while SteamVR is closed; backup kept)
     6. installs/updates the module DLL (your steamframe-config.json calibration is never overwritten)
     7. checks the Windows Firewall rule for the module (offers an admin prompt to add one)
     8. restarts VRCFaceTracking through Steam, then runs the status check
@@ -151,15 +151,17 @@ elseif ($vr.Ok) { Write-Step ok "Steam Link shares eye data on port 9015" }
 elseif (-not $vrPath -or -not (Test-Path $vrPath)) { Write-Step warn "steamvr.vrsettings not found (start SteamVR once, then run setup again)" }
 elseif ((-not $SteamVrSettings) -and (Test-SteamVrRunning)) {
   Write-Step warn "Steam Link OSC settings need changing, but SteamVR is running (it would overwrite the change)."
-  Write-Host "        Close SteamVR and run setup again, or in SteamVR: Settings > Advanced > Video > Steam Link: OSC Output Port 9015, share eye tracking on." -ForegroundColor DarkYellow
+  Write-Host "        Close SteamVR and run setup again, or in SteamVR: Settings > Advanced > Video > Steam Link: Enable OSC on, share face tracking via OSC on, OSC Output Port 9015, share eye tracking on (then reconnect the headset)." -ForegroundColor DarkYellow
 } else {
-  Act "Steam Link driver: OSC output port 9015 and eye data sharing (backup: steamvr.vrsettings.bak-steamframe)" {
+  Act "Steam Link driver: OSC on, output port 9015 and eye data sharing (backup: steamvr.vrsettings.bak-steamframe)" {
     $bak = "$vrPath.bak-steamframe"
     if (-not (Test-Path $bak)) { Copy-Item $vrPath $bak }
     $j = Get-Content $vrPath -Raw | ConvertFrom-Json
     if (-not $j.driver_vrlink) { $j | Add-Member -NotePropertyName driver_vrlink -NotePropertyValue ([pscustomobject]@{}) }
     $j.driver_vrlink | Add-Member -NotePropertyName OSCOutPort -NotePropertyValue 9015 -Force
     $j.driver_vrlink | Add-Member -NotePropertyName shareEyeTrackingData -NotePropertyValue $true -Force
+    $j.driver_vrlink | Add-Member -NotePropertyName useOSC -NotePropertyValue $true -Force
+    $j.driver_vrlink | Add-Member -NotePropertyName useOSCFace -NotePropertyValue $true -Force
     [IO.File]::WriteAllText($vrPath, ($j | ConvertTo-Json -Depth 32), (New-Object Text.UTF8Encoding($false)))
   }
 }

@@ -26,7 +26,18 @@ Eye tracking for the Steam Frame in VRChat via VRCFaceTracking (VRCFT). Read `RE
 - Day state: headset SteamOS 0.5.8 beta (build 20261106), PC SteamVR beta 2.19.2 (build 26496310). This morning's log
   showed per-eye lids from SteamVR working on these versions.
 
-## v0.3.1 (2026-11-10, committed locally, NOT pushed, NOT released)
+## v0.3.2 (2026-11-11): setup turns on Steam Link's OSC output
+
+- On the user's second PC setup ran clean but the module stayed on `source: none`. `vrserver.txt` said
+  `vrlink: SVLHMDDriver::InitializeOSC: OSC was disabled`: `driver_vrlink.useOSC` (and `useOSCFace`) default to false
+  (`SteamVR\drivers\vrlink\resources\settings\default.vrsettings`) and setup only wrote `OSCOutPort` + `shareEyeTrackingData`.
+  The first PC presumably had "Enable OSC" switched on in the SteamVR UI earlier (not checked).
+- `Get-VrlinkSettings` now wants all four values, setup writes `useOSC` / `useOSCFace` true, the doctor names them.
+  The user confirmed eye tracking works on that PC afterwards (SteamVR beta 2.19.2, build 26496310).
+- Not verified: whether `useOSCFace` is needed for the eyelids (`/sl/xrfb/facew/...`) or `useOSC` alone is enough.
+  The translated READMEs were not updated for this.
+
+## v0.3.1 (2026-11-10, released)
 
 - GitHub issue #1 (halobtw, 2026-10-28): Advanced > 1 failed with "cannot log in ... with the key" although their SSH
   works. Root cause in `setup.ps1` section 8: it tried only its own key (`IdentitiesOnly`) and authorised it with

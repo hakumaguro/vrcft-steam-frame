@@ -4,7 +4,7 @@
 $script:SteamAppId = "3329480"     # VRCFaceTracking on Steam
 $script:ModuleDll = "SteamFrameVRCFTModule.dll"
 $script:StockDll = "SteamLinkVRCFTModule.dll"
-$script:ModuleVersion = "0.3.1"
+$script:ModuleVersion = "0.3.2"
 $script:RepoUrl = "https://github.com/hakumaguro/vrcft-steam-frame"
 
 function Get-VrcftDataDir {
@@ -73,13 +73,15 @@ function Get-SteamVrSettingsPath {
 # Read the two Steam Link driver values that matter. Returns @{Port=..; ShareEye=..} (nulls when unset)
 function Get-VrlinkSettings {
   param([string]$Path)
-  $r = @{ Port = $null; ShareEye = $null; Ok = $false }
+  # UseOsc / UseOscFace default to false in SteamVR: without useOSC the driver logs "OSC was disabled" and sends nothing.
+  $r = @{ Port = $null; ShareEye = $null; UseOsc = $null; UseOscFace = $null; Ok = $false }
   if (-not $Path -or -not (Test-Path $Path)) { return $r }
   try {
     $j = Get-Content $Path -Raw | ConvertFrom-Json
-    if ($j.driver_vrlink) { $r.Port = $j.driver_vrlink.OSCOutPort; $r.ShareEye = $j.driver_vrlink.shareEyeTrackingData }
+    if ($j.driver_vrlink) { $r.Port = $j.driver_vrlink.OSCOutPort; $r.ShareEye = $j.driver_vrlink.shareEyeTrackingData
+      $r.UseOsc = $j.driver_vrlink.useOSC; $r.UseOscFace = $j.driver_vrlink.useOSCFace }
   } catch {}
-  $r.Ok = ("$($r.Port)" -eq "9015" -and $r.ShareEye -eq $true)
+  $r.Ok = ("$($r.Port)" -eq "9015" -and $r.ShareEye -eq $true -and $r.UseOsc -eq $true -and $r.UseOscFace -eq $true)
   return $r
 }
 
